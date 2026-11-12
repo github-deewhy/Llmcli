@@ -1,0 +1,34 @@
+# LLMCLI profiles — copy to ~/.llmcli/profiles.toml  (setup.sh does this for you)
+#
+# A profile bundles one provider setup: provider, endpoint, model, key, options.
+# Pick one with:   llmcli --profile nvidia      or, inside the CLI,   /profile nvidia
+# List them with:  llmcli --list-profiles       or   /profiles
+#
+# API keys are NEVER written in this file. `api_key_env` names an environment
+# variable (set it in your shell or in ~/.llmcli/.env) that holds the key.
+#
+# Uncomment the next line to make a profile the default. It must stay ABOVE the
+# [profiles.*] sections (a TOML rule). With no default, LLMCLI_PROFILE and the
+# plain LLMCLI_* settings in .env are used exactly as before.
+# default = "local"
+
+[profiles.local]
+provider = "ollama"
+endpoint = "http://localhost:11434"
+model = "qwen2.5-coder"
+
+[profiles.gemini]
+provider = "openai_compat"
+endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/"
+model = "REPLACE-ME"            # run /models after switching to see valid ids
+api_key_env = "GEMINI_API_KEY"
+
+[profiles.nvidia]
+provider = "openai_compat"
+endpoint = "https://integrate.api.nvidia.com/v1"
+model = "nvidia/nemotron-3-ultra-550b-a55b"
+api_key_env = "NVIDIA_API_KEY"
+max_tokens = 16384
+temperature = 1
+top_p = 0.95
+extra_body = { chat_template_kwargs = { enable_thinking = true } }

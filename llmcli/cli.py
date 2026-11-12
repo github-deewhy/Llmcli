@@ -1,0 +1,461 @@
+"""Main CLI entry point, REPL loop, and command routing."""
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Callable
+
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.styles import DynamicStyle, Style
+
+from llmcli.agent import CodingAgent
+from llmcli.coding_tools import ProjectCodingTools
+from llmcli.config import load_config, lookup_env
+from llmcli.context import load_context
+from llmcli.file_resolver import resolve_attachments
+from llmcli.history import Conversation
+from llmcli.memory import MemoryStore
+from llmcli.profiles import load_profiles, summarize_profiles
+from llmcli.providers import create_provider
+from llmcli.providers.base import BaseProvider
+from llmcli.ui import THEME_PRESETS, StreamingUI
+
+CODING_SYSTEM_PROMPT = (
+    "You are a helpful coding CLI assistant. Focus on the user's code and explicit "
+    "task; keep responses practical and avoid unrelated assumptions."
+)
+
+
+def build_keybindings() -> KeyBindings:
+    """Use Enter to send and Escape+Enter to insert a newline."""
+    bindings = KeyBindings()
+
+    @bindings.add("enter")
+    def _(event):
+        event.current_buffer.validate_and_handle()
+
+    @bindings.add("escape", "enter")
+    def _(event):
+        event.current_buffer.insert_text("\n")
+
+    return bindings
+
+
+def handle_command(
+    cmd: str,
+    conversation: Conversation,
+    config,
+    provider: BaseProvider,
+    ui: StreamingUI,
+    memory_store: MemoryStore,
+    confirm: Callable[[str], bool] | None = None,
+    switch_profile: Callable[[str, bool], None] | None = None,
+) -> bool:
+    """
+    Handle slash commands. Returns True if the CLI should continue, False to exit.
+    """
+    parts = cmd.strip().split(maxsplit=1)
+    command = parts[0].lower()
+    args = parts[1] if len(parts) > 1 else ""
+
+    if command in ["/quit", "/exit"]:
+        ui.print_info("Goodbye!")
+        return False
+    if command in ["/help", "/?"]:
+        ui.print_help()
+    elif command in ["/clear", "/reset"]:
+        if args:
+            ui.print_error(
+                "Usage: /clear (or /reset). To clear memory, use "
+                "/memory clear with global, project, or all."
+            )
+        else:
+            conversation.clear()
+            ui.print_success("Conversation history cleared.")
+    elif command in ["/config", "/status"]:
+        ui.console.print(f"[dim]Profile:[/dim] [bold]{getattr(config, 'profile', None) or '(none)'}[/bold]")
+        ui.console.print(f"[dim]Provider:[/dim] [bold]{config.provider}[/bold]")
+        ui.console.print(f"[dim]Model:[/dim] [bold]{config.model}[/bold]")
+        ui.console.print(f"[dim]Endpoint:[/dim] [bold]{config.endpoint}[/bold]")
+        ui.console.print(f"[dim]Context Size:[/dim] [bold]{config.context_size}[/bold]")
+        ui.console.print(f"[dim]Max Tokens:[/dim] [bold]{config.max_tokens}[/bold]")
+        ui.console.print(f"[dim]Theme:[/dim] [bold]{ui.theme}[/bold]")
+    elif command in ["/system", "/context"]:
+        if conversation.system_prompt:
+            preview = conversation.system_prompt[:300] + ("..." if len(conversation.system_prompt) > 300 else "")
+            ui.console.print(f"[dim cyan]System Context Loaded:[/dim cyan]\n{preview}")
+        else:
+            ui.print_info("No system context file loaded.")
+    elif command == "/model":
+        if not args:
+            ui.print_error("Usage: /model <model_name>")
+        else:
+            config.model = args
+            provider.model = args
+            ui.print_success(f"Model switched to: [bold]{args}[/bold]")
+    elif command == "/profiles":
+        try:
+            _default, profiles = load_profiles()
+        except ValueError as error:
+            ui.print_error(str(error))
+        else:
+            ui.print_profiles(summarize_profiles(profiles, lookup_env), getattr(config, "profile", None))
+    elif command == "/profile":
+        names = args.split()
+        keep = "--keep" in names
+        names = [name for name in names if name != "--keep"]
+        if not names:
+            ui.print_info(
+                f"Active profile: [bold]{getattr(config, 'profile', None) or '(none)'}[/bold] · "
+                r"switch with /profile <name> \[--keep] · list with /profiles"
+            )
+        elif len(names) > 1:
+            ui.print_error(r"Usage: /profile <name> \[--keep]")
+        elif switch_profile is None:
+            ui.print_error("Profile switching is not available in this mode.")
+        else:
+            switch_profile(names[0], keep)
+    elif command == "/models":
+        with ui.show_spinner("Fetching models..."):
+            models = provider.list_models()
+        if models:
+            ui.console.print("[dim]Available models:[/dim]")
+            for model in models:
+                ui.console.print(f"  • {model}")
+        else:
+            ui.print_error("Could not fetch models.")
+    elif command == "/theme":
+        if not args:
+            ui.print_info(f"Current theme: [bold]{ui.theme}[/bold]")
+            ui.print_themes()
+        else:
+            try:
+                ui.set_theme(args)
+            except ValueError as error:
+                ui.print_error(str(error))
+            else:
+                ui.print_success(f"Theme changed to [bold]{ui.theme}[/bold].")
+    elif command == "/memory":
+        _handle_memory_command(args, conversation, memory_store, ui, confirm)
+    else:
+        ui.print_error(f"Unknown command: {command}. Type /help for options.")
+
+    return True
+
+
+def _handle_memory_command(
+    args: str,
+    conversation: Conversation,
+    memory_store: MemoryStore,
+    ui: StreamingUI,
+    confirm: Callable[[str], bool] | None,
+) -> None:
+    parts = args.strip().split(maxsplit=1)
+    if not parts:
+        ui.print_info(
+            r"Usage: /memory show \[global|project|all] · "
+            r"/memory add \[--global] <text> · "
+            r"/memory clear \[global|project|all] · /memory refresh"
+        )
+        ui.print_info("Memory files:")
+        ui.print_memory_locations(memory_store.paths)
+        return
+
+    action = parts[0].lower()
+    details = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "show":
+            scope = details.lower() or "all"
+            if scope == "all":
+                scopes = ("global", "project")
+            elif scope in memory_store.paths:
+                scopes = (scope,)
+            else:
+                ui.print_error("Usage: /memory show [global|project|all]")
+                return
+            contents = memory_store.read()
+            for selected_scope in scopes:
+                ui.print_memory(
+                    selected_scope,
+                    str(memory_store.paths[selected_scope]),
+                    contents[selected_scope],
+                )
+        elif action == "add":
+            scope = "project"
+            content = details
+            if details == "--global":
+                ui.print_error("Usage: /memory add [--global] <Markdown text>")
+                return
+            if details.startswith("--global "):
+                scope = "global"
+                content = details[len("--global "):]
+            if not content.strip():
+                ui.print_error("Usage: /memory add [--global] <Markdown text>")
+                return
+            memory_store.add(scope, content)
+            conversation.system_prompt = memory_store.compose_system_prompt()
+            ui.print_success(f"Added note to {scope} memory.")
+        elif action == "refresh":
+            if details:
+                ui.print_error("Usage: /memory refresh")
+                return
+            conversation.system_prompt = memory_store.compose_system_prompt()
+            ui.print_success("Memory reloaded for the current session.")
+        elif action == "clear":
+            scope = details.lower()
+            if scope not in ("global", "project", "all"):
+                ui.print_error("Usage: /memory clear [global|project|all]")
+                return
+            if confirm is None:
+                ui.print_error("Memory clearing requires confirmation.")
+                return
+            if not confirm(f"Type 'clear' to erase {scope} memory: "):
+                ui.print_info("Memory clear cancelled.")
+                return
+            scopes = ("global", "project") if scope == "all" else (scope,)
+            for selected_scope in scopes:
+                memory_store.clear(selected_scope)
+            conversation.system_prompt = memory_store.compose_system_prompt()
+            ui.print_success(f"Cleared {scope} memory.")
+        else:
+            ui.print_error(
+                "Usage: /memory show [global|project|all] · "
+                "/memory add [--global] <text> · "
+                "/memory clear [global|project|all] · /memory refresh"
+            )
+    except (OSError, UnicodeError) as error:
+        ui.print_error(f"Could not access memory file: {error}")
+
+
+def _confirm_memory_clear(session: PromptSession, message: str) -> bool:
+    return _prompt_confirmation(session, message, "clear")
+
+
+def _prompt_confirmation(session: PromptSession, message: str, expected: str) -> bool:
+    original_message = session.message
+    try:
+        answer = session.prompt(message=[("class:prompt", message)])
+    except (EOFError, KeyboardInterrupt):
+        return False
+    finally:
+        session.message = original_message
+    return answer.strip().lower() == expected
+
+
+def switch_profile_session(
+    name: str,
+    keep: bool,
+    config,
+    conversation: Conversation,
+    agent: CodingAgent,
+    ui: StreamingUI,
+) -> BaseProvider | None:
+    """
+    Switch the running session to another profile.
+
+    Returns the new provider on success. On any failure (unknown profile, missing
+    API key, unreachable endpoint) an error is shown, nothing is changed, and
+    None is returned.
+    """
+    try:
+        new_config = load_config({"theme": ui.theme}, profile=name)
+        new_provider = create_provider(new_config)
+    except ValueError as error:
+        ui.print_error(str(error))
+        return None
+    with ui.show_spinner(f"Checking {new_config.provider} connection..."):
+        healthy, message = new_provider.check_health()
+    if not healthy:
+        ui.print_error(f"Not switched to '{name}': {message}")
+        return None
+
+    config.__dict__.update(vars(new_config))
+    agent.provider = new_provider
+    conversation.max_tokens = new_config.context_size
+    if keep:
+        dropped = conversation.keep_text_only()
+        note = f"kept the conversation text (dropped {dropped} tool/empty messages)"
+    else:
+        conversation.clear()
+        note = "started a fresh conversation (use --keep to carry text over)"
+    ui.print_success(
+        f"Switched to profile [bold]{name}[/bold] · {new_config.provider} / "
+        f"[bold]{new_config.model}[/bold] · {note}"
+    )
+    return new_provider
+
+
+def run_repl(config, provider, conversation: Conversation, ui: StreamingUI, memory_store: MemoryStore):
+    """Run the interactive REPL loop."""
+    history_file = Path.home() / ".llmcli" / "history.txt"
+    history_file.parent.mkdir(parents=True, exist_ok=True)
+
+    session = PromptSession(
+        history=FileHistory(str(history_file)),
+        multiline=True,
+        key_bindings=build_keybindings(),
+        message=[("class:prompt", "❯ ")],
+        style=DynamicStyle(
+            lambda: Style.from_dict({"prompt": f"bold {ui.colors['prompt']}"})
+        ),
+    )
+
+    ui.print_info(
+        f"Ready · [bold]{config.provider}[/bold] / [bold]{config.model}[/bold] "
+        "· agent tools on · edits/tests require approval · Enter to send · /help"
+    )
+
+    def confirm_memory_clear(message: str) -> bool:
+        return _confirm_memory_clear(session, message)
+
+    def confirm_agent_action(message: str) -> bool:
+        return _prompt_confirmation(session, message, "yes")
+
+    tools = ProjectCodingTools(Path.cwd(), ui)
+    agent = CodingAgent(provider, conversation, tools, ui, confirm_agent_action)
+
+    def switch_profile(name: str, keep: bool) -> None:
+        nonlocal provider
+        new_provider = switch_profile_session(name, keep, config, conversation, agent, ui)
+        if new_provider is not None:
+            provider = new_provider
+
+    while True:
+        try:
+            user_input = session.prompt()
+        except (EOFError, KeyboardInterrupt):
+            ui.print_info("\nGoodbye!")
+            break
+
+        if not user_input.strip():
+            continue
+
+        stripped_input = user_input.strip()
+        if stripped_input.startswith("/"):
+            if not handle_command(
+                stripped_input,
+                conversation,
+                config,
+                provider,
+                ui,
+                memory_store,
+                confirm_memory_clear,
+                switch_profile,
+            ):
+                break
+            continue
+
+        resolved_input = resolve_attachments(user_input)
+        agent.run(resolved_input)
+        ui.console.print()
+
+
+def run_oneshot(config, provider, conversation: Conversation, ui: StreamingUI, prompt: str):
+    """Run a single prompt and exit (useful for scripting/SSH)."""
+    resolved_input = resolve_attachments(prompt)
+    conversation.add("user", resolved_input)
+
+    response = ui.render_stream(provider.chat(conversation.get_messages_for_api(), stream=True))
+    conversation.add("assistant", response)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="LLM CLI - Chat with local or public models")
+    parser.add_argument("-p", "--prompt", type=str, help="One-shot prompt (exits after response)")
+    parser.add_argument("--model", type=str, help="Override the model specified in config")
+    parser.add_argument(
+        "--theme",
+        choices=tuple(THEME_PRESETS),
+        help="CLI color preset (overrides LLMCLI_THEME)",
+    )
+    parser.add_argument(
+        "--profile",
+        type=str,
+        help="Named profile from ~/.llmcli/profiles.toml (overrides LLMCLI_PROFILE and the file's default)",
+    )
+    parser.add_argument(
+        "--list-profiles",
+        action="store_true",
+        help="List configured profiles and exit",
+    )
+    args = parser.parse_args()
+
+    if args.list_profiles:
+        list_ui = StreamingUI()
+        try:
+            default, profiles = load_profiles()
+        except ValueError as error:
+            list_ui.print_error(str(error))
+            sys.exit(2)
+        list_ui.print_profiles(summarize_profiles(profiles, lookup_env), default)
+        return
+
+    cli_overrides = {}
+    if args.model:
+        cli_overrides["model"] = args.model
+    if args.theme:
+        cli_overrides["theme"] = args.theme
+
+    try:
+        config = load_config(cli_overrides, profile=args.profile)
+    except ValueError as error:
+        print(f"Configuration error: {error}", file=sys.stderr)
+        sys.exit(2)
+    ui = StreamingUI()
+    try:
+        ui.set_theme(config.theme)
+    except ValueError as error:
+        ui.print_error(str(error))
+        sys.exit(2)
+    ui.print_banner(config.provider, config.model)
+    if config.profile:
+        ui.print_info(f"Profile: [bold]{config.profile}[/bold]")
+
+    try:
+        provider = create_provider(config)
+    except ValueError as e:
+        ui.print_error(str(e))
+        sys.exit(1)
+
+    with ui.show_spinner(f"Checking {config.provider} connection..."):
+        is_healthy, message = provider.check_health()
+
+    if not is_healthy:
+        ui.print_error(message)
+        sys.exit(1)
+    ui.print_success(message)
+
+    context_prompt = load_context(config)
+    base_system_prompt = "\n\n".join(
+        part for part in (CODING_SYSTEM_PROMPT, context_prompt) if part
+    )
+    memory_store = MemoryStore(base_prompt=base_system_prompt)
+    try:
+        loaded_memory = memory_store.read()
+        conversation = Conversation(
+            system_prompt=memory_store.compose_system_prompt(loaded_memory),
+            max_tokens=config.context_size,
+        )
+    except (OSError, UnicodeError) as error:
+        ui.print_error(f"Could not load local memory: {error}")
+        sys.exit(1)
+
+    if context_prompt:
+        ui.print_info(f"Loaded context from: {config.context_file}")
+    if any(loaded_memory.values()):
+        ui.print_info("Loaded local persistent memory.")
+
+    if args.prompt:
+        if args.prompt == "-":
+            prompt_text = sys.stdin.read()
+        else:
+            prompt_text = args.prompt
+        run_oneshot(config, provider, conversation, ui, prompt_text)
+    else:
+        run_repl(config, provider, conversation, ui, memory_store)
+
+
+if __name__ == "__main__":
+    main()

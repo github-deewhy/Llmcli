@@ -1,0 +1,20 @@
+# Project Context & Instructions
+
+## Project Overview
+- **Project Name:** [Insert Project Name]
+- **Purpose:** [Briefly describe what the application/repository does]
+- **Primary Language(s) & Framework(s):** [e.g., Python, FastAPI, PostgreSQL]
+
+## Architecture & Directory Structure
+- `src/` - Core application source code
+- `tests/` - Unit and integration test suites
+- `docs/` - Architecture notes and API documentation
+
+## Coding Standards & Conventions
+- **Style:** Follow existing formatting, naming conventions, and linter rules.
+- **Modularity:** Write small, single-responsibility functions.
+- **Types & Documentation:** Include explicit type annotations and concise docstrings.
+
+## Safety Rules
+- **Verify First:** Always read relevant files (using @filename) before proposing edits.
+- **Scope:** Keep changes focused strictly on the requested task.
