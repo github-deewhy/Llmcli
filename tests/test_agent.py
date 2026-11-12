@@ -8,25 +8,22 @@ from rich.console import Console
 from llmcli.agent import CodingAgent
 from llmcli.coding_tools import ProjectCodingTools
 from llmcli.history import Conversation
-from llmcli.providers.base import ModelResponse, ToolCall
+from llmcli.providers.base import ToolCall
+from llmcli.providers.events import Done, TextDelta, ToolCallEvent
+from llmcli.providers.fake import INTERRUPT, ScriptedProvider
 from llmcli.ui import StreamingUI
 
 
-class FakeProvider:
-    def __init__(self, responses):
-        self.responses = iter(responses)
-        self.requests = []
+def ModelResponse(content, tool_calls, assistant_message):  # noqa: N802 - keeps the old test shape
+    """One scripted reply in the event form used since M1."""
+    events = [TextDelta(content)] if content else []
+    events += [ToolCallEvent(call) for call in tool_calls]
+    events.append(Done("stop", assistant_message))
+    return events
 
-    def complete(self, messages, tools):
-        self.requests.append((messages, tools))
-        return next(self.responses)
 
-    def tool_result_message(self, call, content):
-        return {
-            "role": "tool",
-            "tool_call_id": call.id,
-            "content": content,
-        }
+def FakeProvider(responses):  # noqa: N802
+    return ScriptedProvider(responses)
 
 
 def test_agent_reads_files_then_uses_tool_result_in_followup(tmp_path):
@@ -109,9 +106,8 @@ def test_agent_reports_when_model_does_not_call_tools(tmp_path):
 
 
 def test_agent_cancels_interrupted_model_request_without_losing_prior_history(tmp_path):
-    class InterruptingProvider(FakeProvider):
-        def complete(self, messages, tools):
-            raise KeyboardInterrupt
+    def InterruptingProvider(_responses):  # noqa: N802
+        return ScriptedProvider([[INTERRUPT]])
 
     root = tmp_path / "project"
     root.mkdir()

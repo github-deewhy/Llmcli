@@ -1,10 +1,12 @@
 """Terminal UI using Rich for a polished, throttled coding CLI."""
 
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.markup import escape
@@ -12,6 +14,30 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
+
+from llmcli.providers.base_types import ToolCall
+from llmcli.providers.events import (
+    Capabilities,
+    Done,
+    ReasoningDelta,
+    TextDelta,
+    ToolCallEvent,
+    Usage,
+)
+
+
+@dataclass
+class TurnResult:
+    """Everything one streamed reply produced (spec 14, section 2.8)."""
+
+    text: str = ""
+    reasoning: str = ""
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    assistant_message: dict[str, Any] | None = None
+    usage: Usage | None = None
+    finish_reason: str | None = None
+    interrupted: bool = False
+
 
 THEME_PRESETS = {
     "ocean": {
@@ -49,6 +75,8 @@ class StreamingUI:
     def __init__(self, console: Console | None = None, theme: str = "ocean"):
         self.console = console or Console()
         self.update_interval = 0.125  # ~8 FPS to prevent flickering
+        # Show the model's thinking text (``/thinking on``); off by default (P7).
+        self.show_reasoning = False
         self.set_theme(theme)
 
     @property
@@ -91,12 +119,14 @@ class StreamingUI:
         for command, description in (
             ("/help, /?", "Show available commands"),
             ("/clear, /reset", "Clear the conversation"),
-            ("/status, /config", "Show provider and model settings"),
+            ("/status, /config", "Show settings, capabilities and last-turn speed"),
             ("/system, /context", "Show the loaded coding instructions"),
             (r"/profiles", "List configured provider profiles"),
             (r"/profile \[name] \[--keep]", "Show the active profile, or switch to another"),
             ("/model <name>", "Switch the model within the current profile"),
             ("/models", "List models available from the provider"),
+            ("/probe", "Test the model with one tiny tool call and show its capabilities"),
+            (r"/thinking \[on|off]", "Show or hide the model's thinking text"),
             (r"/theme \[name]", "Show or change the color preset"),
             ("/memory", "Show memory commands and file locations"),
             (r"/memory show \[global|project|all]", "Display selected Markdown memory"),
@@ -244,3 +274,120 @@ class StreamingUI:
 
         self.console.print(panel)
         return buffer
+
+    # --- streamed events (spec 14) ---------------------------------------------
+
+    def _event_view(self, result: TurnResult, title: str):
+        parts: list[Any] = []
+        if result.reasoning:
+            if self.show_reasoning:
+                parts.append(Text(result.reasoning, style="dim italic"))
+            elif not result.text:
+                parts.append(Text(f"thinking… ({len(result.reasoning)} characters)", style="dim italic"))
+        if result.text:
+            parts.append(Markdown(result.text))
+        if not parts:
+            parts.append(Text("…", style="dim"))
+        return Panel(Group(*parts), title=title, border_style=self.colors["border"])
+
+    def render_events(
+        self,
+        events: Iterator[Any],
+        title: str = "LLMCLI · response",
+        show_empty: bool = True,
+    ) -> TurnResult:
+        """Stream events to the terminal and collect them.
+
+        Ctrl-C closes the stream at once and returns a result marked ``interrupted``.
+        ``ProviderError`` from the stream is raised to the caller.
+        """
+        result = TurnResult()
+
+        def consume(on_change) -> None:
+            for event in events:
+                if isinstance(event, TextDelta):
+                    result.text += event.text
+                    on_change()
+                elif isinstance(event, ReasoningDelta):
+                    result.reasoning += event.text
+                    on_change()
+                elif isinstance(event, ToolCallEvent):
+                    result.tool_calls.append(event.call)
+                elif isinstance(event, Usage):
+                    result.usage = event
+                elif isinstance(event, Done):
+                    result.finish_reason = event.finish_reason
+                    result.assistant_message = event.assistant_message
+
+        try:
+            if not self.console.is_terminal:
+                consume(lambda: None)
+            else:
+                last_update = 0.0
+                with Live(
+                    self._event_view(result, title),
+                    console=self.console,
+                    transient=True,
+                    vertical_overflow="ellipsis",
+                    refresh_per_second=8,
+                ) as live:
+                    def refresh() -> None:
+                        nonlocal last_update
+                        now = time.monotonic()
+                        if now - last_update > self.update_interval:
+                            live.update(self._event_view(result, title))
+                            last_update = now
+
+                    consume(refresh)
+        except KeyboardInterrupt:
+            result.interrupted = True
+            close = getattr(events, "close", None)
+            if close is not None:
+                close()
+
+        if result.interrupted:
+            if result.text:
+                self.console.print(
+                    Panel(Markdown(result.text), title="LLMCLI · cancelled", border_style="dim")
+                )
+            self.print_info("Generation cancelled.")
+        elif result.text or (self.show_reasoning and result.reasoning):
+            self.console.print(self._event_view(result, title))
+        elif show_empty:
+            self.console.print(
+                Panel(Text("No response received.", style="dim"), title=title, border_style=self.colors["border"])
+            )
+        return result
+
+    def print_capabilities(self, capabilities: Capabilities, context_size: int) -> None:
+        table = Table(show_header=True, header_style=f"bold {self.colors['accent']}", pad_edge=False)
+        table.add_column("Capability", no_wrap=True)
+        table.add_column("Value")
+        table.add_column("Source", style="dim")
+        for label, value, source in capabilities.rows():
+            table.add_row(label, escape(value), source)
+        self.console.print(table)
+        length = capabilities.context_length
+        if isinstance(length, int) and length != context_size:
+            self.print_info(
+                f"The server reports a context length of {length}; llmcli uses context_size = "
+                f"{context_size} from your configuration."
+            )
+
+    def print_usage(self, usage: Usage | None) -> None:
+        if usage is None:
+            self.console.print("[dim]Last turn:[/dim] none yet")
+            return
+
+        def show(value: Any, suffix: str = "") -> str:
+            return "?" if value is None else f"{value}{suffix}"
+
+        parts = [
+            f"first token {show(usage.ttft_s, ' s')}",
+            f"prompt {show(usage.prompt_tokens)} tokens",
+            f"generated {show(usage.completion_tokens)} tokens",
+            f"{show(usage.gen_tokens_per_s)} tokens/s",
+        ]
+        if usage.cached_tokens is not None:
+            parts.append(f"cached {usage.cached_tokens} tokens")
+        self.console.print(f"[dim]Last turn:[/dim] {' · '.join(parts)}")

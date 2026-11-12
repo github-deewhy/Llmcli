@@ -30,6 +30,8 @@ BUILT_IN: dict[str, Any] = {
     "temperature": None,
     "top_p": None,
     "extra_body": {},
+    "request_timeout": 300,
+    "tool_mode": "auto",
 }
 
 CLI_KEYS = ("model", "theme")
@@ -48,11 +50,15 @@ class Config:
     profile: str | None = None
     temperature: float | None = None
     top_p: float | None = None
-    # Extra top-level fields merged into OpenAI-compatible request bodies
-    # (e.g. {"chat_template_kwargs": {"enable_thinking": true}}).
+    # Extra top-level fields merged into request bodies, e.g. {"think": false} for
+    # Ollama or {"chat_template_kwargs": {"enable_thinking": false}} for llama.cpp/vLLM.
     extra_body: dict[str, Any] = field(default_factory=dict)
     # Where the settings came from: the config file path or "built-in defaults".
     source: str = BUILT_IN_SOURCE
+    # Longest silence (seconds) allowed from the server, including model load (spec 14, 2.3).
+    request_timeout: int = 300
+    # Tool-call rung: "auto" (native, falls back to text), "native" or "text" (spec 14, 2.6).
+    tool_mode: str = "auto"
 
 
 def select_profile(file: ConfigFile, requested: str | None) -> str | None:
@@ -110,4 +116,6 @@ def load_config(
         top_p=None if top_p is None else float(top_p),
         extra_body=dict(values["extra_body"]),
         source=file.label if file.exists else BUILT_IN_SOURCE,
+        request_timeout=int(values["request_timeout"]),
+        tool_mode=str(values["tool_mode"]),
     )

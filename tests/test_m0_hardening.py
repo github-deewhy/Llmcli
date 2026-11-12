@@ -3,7 +3,6 @@
 import json
 from io import StringIO
 
-import httpx
 import pytest
 from rich.console import Console
 
@@ -12,6 +11,8 @@ from llmcli.coding_tools import MAX_TOOL_RESULT, ProjectCodingTools
 from llmcli.config import Config, load_config
 from llmcli.history import Conversation
 from llmcli.memory import MemoryStore
+from llmcli.providers.events import ProviderConnectError, ProviderHTTPError, TextDelta
+from llmcli.providers.fake import ScriptedProvider
 from llmcli.security import MAX_INSTRUCTION_BYTES, read_capped_text
 from llmcli.ui import StreamingUI
 
@@ -52,12 +53,8 @@ def test_valid_integer_settings_still_work(isolated):
 
 # --- run_oneshot -----------------------------------------------------------
 
-class FailingProvider:
-    def __init__(self, error):
-        self.error = error
-
-    def chat(self, messages, stream=True):
-        raise self.error
+def FailingProvider(error):  # noqa: N802
+    return ScriptedProvider([[error]])
 
 
 def _oneshot(provider):
@@ -69,16 +66,15 @@ def _oneshot(provider):
 
 
 def test_oneshot_connection_error_returns_1_with_short_message():
-    code, text = _oneshot(FailingProvider(httpx.ConnectError("refused")))
+    error = ProviderConnectError("Cannot reach http://localhost:11434. Is the server running?")
+    code, text = _oneshot(FailingProvider(error))
     assert code == 1
-    assert "Could not talk to http://localhost:11434" in text
+    assert "Cannot reach http://localhost:11434" in text
     assert "Traceback" not in text
 
 
 def test_oneshot_http_status_error_mentions_status():
-    request = httpx.Request("POST", "http://x")
-    error = httpx.HTTPStatusError("bad", request=request, response=httpx.Response(401, request=request))
-    code, text = _oneshot(FailingProvider(error))
+    code, text = _oneshot(FailingProvider(ProviderHTTPError("returned HTTP 401.", 401)))
     assert code == 1 and "401" in text
 
 
@@ -88,11 +84,7 @@ def test_oneshot_value_error_and_interrupt():
 
 
 def test_oneshot_success_returns_0():
-    class Good:
-        def chat(self, messages, stream=True):
-            yield "ok"
-
-    assert _oneshot(Good())[0] == 0
+    assert _oneshot(ScriptedProvider([[TextDelta("ok")]]))[0] == 0
 
 
 # --- truncation keeps valid JSON and the useful budget ---------------------

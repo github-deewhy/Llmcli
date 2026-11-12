@@ -3,6 +3,33 @@
 Format: newest first. Update this file and the docs (README.md, user-guide.md,
 config.toml.example) in the same change as the code.
 
+## 0.4.0
+
+M1: streaming provider layer. Only Ollama is tested against a live server.
+
+### Added
+- The agent streams answers while it works with tools; Ctrl-C stops at once and the
+  unfinished answer is not kept.
+- Thinking text (Ollama `thinking`, OpenAI-style `reasoning_content`, inline
+  `<think>` tags) is kept apart from the answer, never stored or re-sent, and shown
+  only with `/thinking on`.
+- Tool calls written as text (a JSON block or `<tool_call>` tags) are accepted;
+  `tool_mode` (`auto`, `native`, `text`) controls this. Tool arguments are checked
+  against the tool's schema and a short error is returned to the model.
+- `/probe` and a capabilities block in `/status` (context length, native tools,
+  reasoning, usage, with the source of each value) plus last-answer speed.
+- `request_timeout` setting (default 300 s).
+- Opt-in live tests: `pytest -m live --live-profile NAME`.
+
+### Changed
+- Every request now has a finite timeout; errors are one line (cannot reach, timed
+  out, HTTP status with a hint, unreadable response) and never include the server's
+  reply body or the API key.
+- `extra_body` is now also sent to Ollama, e.g. `{ think = false }`.
+- HTTP connections ignore proxy environment variables and `.netrc`.
+- Internal: providers expose one `stream()` method yielding typed events; `chat()`
+  and `complete()` are removed.
+
 ## 0.3.0
 
 Breaking: configuration moves to one file. See "Upgrading from 0.2" in user-guide.md.

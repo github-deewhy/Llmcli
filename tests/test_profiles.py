@@ -9,6 +9,7 @@ from llmcli.cli import handle_command
 from llmcli.config import Config
 from llmcli.history import Conversation
 from llmcli.memory import MemoryStore
+from llmcli.providers.fake import ScriptedProvider
 from llmcli.ui import StreamingUI
 
 PROFILES = """\
@@ -56,8 +57,9 @@ def make_ui():
     return StreamingUI(Console(file=output, force_terminal=False, width=200)), output
 
 
-class DummyProvider:
-    model = "m"
+class DummyProvider(ScriptedProvider):
+    def __init__(self):
+        super().__init__([], model="m")
 
 
 def run(command, config, ui, switch=None, tmp_path=None):
@@ -131,17 +133,30 @@ def test_keep_text_only_drops_tool_traffic():
 
 # --- switching a live session ---------------------------------------------------------
 
-class FakeProvider:
+class FakeProvider(ScriptedProvider):
     def __init__(self, config, healthy=True):
-        self.model = config.model
+        super().__init__([], model=config.model)
         self.healthy = healthy
 
     def check_health(self):
         return self.healthy, "ok" if self.healthy else "endpoint down"
 
 
+class OriginalProvider:
+    closed = False
+
+    def close(self):
+        self.closed = True
+
+
 class FakeAgent:
-    provider = "original"
+    def __init__(self):
+        self.original = OriginalProvider()
+        self.provider = self.original
+        self.tool_mode = None
+
+    def set_provider(self, provider, tool_mode):
+        self.provider, self.tool_mode = provider, tool_mode
 
 
 def switch_setup(home, monkeypatch, healthy=True):
@@ -159,6 +174,7 @@ def test_switch_replaces_provider_config_and_clears_history(home, monkeypatch):
     ui, output, convo, config, agent = switch_setup(home, monkeypatch)
     new = switch_profile_session("remote", False, config, convo, agent, ui)
     assert new is agent.provider and new.model == "remote-model"
+    assert agent.original.closed and agent.tool_mode == "auto"
     assert config.profile == "remote" and config.provider == "openai_compat"
     assert config.api_key == "k" and convo.max_tokens == 8192
     assert convo.messages == []
@@ -176,7 +192,7 @@ def test_failed_health_check_changes_nothing(home, monkeypatch):
     from llmcli.cli import switch_profile_session
     ui, output, convo, config, agent = switch_setup(home, monkeypatch, healthy=False)
     assert switch_profile_session("remote", False, config, convo, agent, ui) is None
-    assert agent.provider == "original" and config.profile == "local"
+    assert agent.provider is agent.original and config.profile == "local"
     assert len(convo.messages) == 2
     assert "Not switched" in output.getvalue()
 

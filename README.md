@@ -5,8 +5,11 @@ A focused coding assistant for local and OpenAI-compatible language models.
 ## Features
 
 - Interactive REPL with history and Enter-to-send input
-- Streaming responses with Rich rendering
-- Local first: Ollama, plus OpenAI-compatible local servers (llama.cpp `llama-server`, LM Studio, vLLM); a remote OpenAI-compatible URL is optional
+- Streaming responses with Rich rendering, also while the agent uses tools
+- Local first: Ollama (the tested server), plus OpenAI-compatible local servers (llama.cpp `llama-server`, LM Studio, vLLM; not tested by us); a remote OpenAI-compatible URL is optional
+- Thinking text from reasoning models is kept out of the answer and out of history (`/thinking on` shows it)
+- Works with models that write tool calls as text instead of the native format
+- `/status` shows what the server and model can do and how fast the last answer was
 - One configuration file with named profiles; switch servers with `/profile`
 - Context file loading from project or home directory
 - `@file` attachment resolution for including file contents in prompts
@@ -62,8 +65,20 @@ Inside the CLI use `/profiles` and `/profile <name>` (add `--keep` to carry the
 conversation text over). Every setting, the precedence rules and troubleshooting
 are in [user-guide.md](./user-guide.md#configuration).
 
-Interactive agent workflows require a model/provider that supports structured
-tool calls. One-shot `-p` prompts remain text-only.
+Interactive agent workflows work best with a model that supports native tool calls;
+models that write tool calls as text are handled too (see `tool_mode` in the user
+guide). One-shot `-p` prompts remain text-only.
+
+## Tested servers
+
+Ollama is the only server the llmcli project tests. llama.cpp `llama-server`, LM Studio
+and vLLM use the same OpenAI-compatible code path and should work, but are not tested.
+
+Live tests run against your own server and are skipped by default:
+
+```bash
+pytest -m live --live-profile ollama -v   # profile name from ~/.llmcli/config.toml
+```
 
 ## Example
 

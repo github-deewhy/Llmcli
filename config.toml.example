@@ -13,18 +13,33 @@ context_size = 8192         # tokens; a profile may override this
 max_tokens = 4096           # a profile may override this
 # temperature = 0.2         # optional; a profile may override this
 # top_p = 0.95              # optional; a profile may override this
+# request_timeout = 300     # seconds of silence allowed from the server, including
+#                           # model load; raise it on slow CPU machines
+# tool_mode = "auto"        # auto, native or text; how the model calls tools
 
 # One profile per server. provider, endpoint and model are required.
-# Allowed in a profile: provider, endpoint, model, api_key,
-# context_size, max_tokens, temperature, top_p, extra_body.
+# Allowed in a profile: provider, endpoint, model, api_key, context_size,
+# max_tokens, temperature, top_p, extra_body, request_timeout, tool_mode.
+#
+# Tested: Ollama only. The other servers below follow their documented
+# OpenAI-compatible API but are not tested by the llmcli project.
 
 [profiles.ollama]
 provider = "ollama"
 endpoint = "http://localhost:11434"
 model = "qwen2.5-coder"
 
+# A thinking model on Ollama (e.g. qwen3). Ollama turns thinking on by default
+# for such models; on a CPU-only machine turn it off for faster answers.
+# [profiles.ollama-qwen3]
+# provider = "ollama"
+# endpoint = "http://localhost:11434"
+# model = "qwen3:4b"
+# extra_body = { think = false }
+
 # llama.cpp llama-server. Recent builds listen on port 9931 by default;
 # older builds used 8080. Use the port your server prints at start-up.
+# Start llama-server with --jinja, otherwise it does not return tool calls.
 # [profiles.llamacpp]
 # provider = "openai_compat"
 # endpoint = "http://localhost:9931/v1"
