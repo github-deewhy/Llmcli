@@ -5,7 +5,6 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-import httpx
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
@@ -21,6 +20,7 @@ from llmcli.history import Conversation
 from llmcli.memory import MemoryStore
 from llmcli.providers import create_provider
 from llmcli.providers.base import BaseProvider
+from llmcli.providers.events import ProviderError
 from llmcli.ui import THEME_PRESETS, StreamingUI
 
 CODING_SYSTEM_PROMPT = (
@@ -53,6 +53,7 @@ def handle_command(
     memory_store: MemoryStore,
     confirm: Callable[[str], bool] | None = None,
     switch_profile: Callable[[str, bool], None] | None = None,
+    agent: CodingAgent | None = None,
 ) -> bool:
     """
     Handle slash commands. Returns True if the CLI should continue, False to exit.
@@ -83,7 +84,12 @@ def handle_command(
         ui.console.print(f"[dim]Endpoint:[/dim] [bold]{config.endpoint}[/bold]")
         ui.console.print(f"[dim]Context Size:[/dim] [bold]{config.context_size}[/bold]")
         ui.console.print(f"[dim]Max Tokens:[/dim] [bold]{config.max_tokens}[/bold]")
+        ui.console.print(f"[dim]Request timeout:[/dim] [bold]{getattr(config, 'request_timeout', 300)} s[/bold]")
+        ui.console.print(f"[dim]Tool mode:[/dim] [bold]{_tool_mode_label(config, agent)}[/bold]")
+        ui.console.print(f"[dim]Thinking text:[/dim] [bold]{'shown' if ui.show_reasoning else 'hidden'}[/bold]")
         ui.console.print(f"[dim]Theme:[/dim] [bold]{ui.theme}[/bold]")
+        ui.print_capabilities(provider.capabilities, config.context_size)
+        ui.print_usage(provider.last_usage)
     elif command in ["/system", "/context"]:
         if conversation.system_prompt:
             preview = conversation.system_prompt[:300] + ("..." if len(conversation.system_prompt) > 300 else "")
@@ -96,6 +102,8 @@ def handle_command(
         else:
             config.model = args
             provider.model = args
+            provider.reset_capabilities()
+            provider.probe()
             ui.print_success(f"Model switched to: [bold]{args}[/bold]")
     elif command == "/profiles":
         try:
@@ -128,6 +136,32 @@ def handle_command(
                 ui.console.print(f"  • {model}")
         else:
             ui.print_error("Could not fetch models.")
+    elif command == "/probe":
+        if args:
+            ui.print_error("Usage: /probe")
+        else:
+            try:
+                with ui.show_spinner("Probing the model with one tiny tool call..."):
+                    provider.probe()
+                    provider.live_probe()
+            except ProviderError as error:
+                ui.print_error(f"Probe failed: {error}")
+            except KeyboardInterrupt:
+                ui.print_info("Probe cancelled.")
+            else:
+                ui.print_capabilities(provider.capabilities, config.context_size)
+    elif command == "/thinking":
+        choice = args.strip().lower()
+        if choice in ("on", "off"):
+            ui.show_reasoning = choice == "on"
+            ui.print_success(f"Thinking text {'shown' if ui.show_reasoning else 'hidden'} for this session.")
+        elif not choice:
+            ui.print_info(
+                f"Thinking text is {'shown' if ui.show_reasoning else 'hidden'}. "
+                r"Change with /thinking on or /thinking off."
+            )
+        else:
+            ui.print_error("Usage: /thinking [on|off]")
     elif command == "/theme":
         if not args:
             ui.print_info(f"Current theme: [bold]{ui.theme}[/bold]")
@@ -145,6 +179,13 @@ def handle_command(
         ui.print_error(f"Unknown command: {command}. Type /help for options.")
 
     return True
+
+
+def _tool_mode_label(config, agent: CodingAgent | None) -> str:
+    configured = getattr(config, "tool_mode", "auto")
+    if agent is None or configured != "auto":
+        return configured
+    return f"auto (now: {agent.mode})"
 
 
 def _handle_memory_command(
@@ -273,8 +314,11 @@ def switch_profile_session(
         ui.print_error(f"Not switched to '{name}': {message}")
         return None
 
+    new_provider.probe()
+    old_provider = agent.provider
     config.__dict__.update(vars(new_config))
-    agent.provider = new_provider
+    agent.set_provider(new_provider, new_config.tool_mode)
+    old_provider.close()
     conversation.max_tokens = new_config.context_size
     if keep:
         dropped = conversation.keep_text_only()
@@ -316,7 +360,9 @@ def run_repl(config, provider, conversation: Conversation, ui: StreamingUI, memo
         return _prompt_confirmation(session, message, "yes")
 
     tools = ProjectCodingTools(Path.cwd(), ui)
-    agent = CodingAgent(provider, conversation, tools, ui, confirm_agent_action)
+    agent = CodingAgent(
+        provider, conversation, tools, ui, confirm_agent_action, getattr(config, "tool_mode", "auto")
+    )
 
     def switch_profile(name: str, keep: bool) -> None:
         nonlocal provider
@@ -345,6 +391,7 @@ def run_repl(config, provider, conversation: Conversation, ui: StreamingUI, memo
                 memory_store,
                 confirm_memory_clear,
                 switch_profile,
+                agent,
             ):
                 break
             continue
@@ -363,22 +410,15 @@ def run_oneshot(config, provider, conversation: Conversation, ui: StreamingUI, p
     try:
         resolved_input = resolve_attachments(prompt)
         conversation.add("user", resolved_input)
-        response = ui.render_stream(provider.chat(conversation.get_messages_for_api(), stream=True))
-        conversation.add("assistant", response)
+        result = ui.render_events(provider.stream(conversation.get_messages_for_api()))
+        if result.interrupted:
+            return 130
+        conversation.add("assistant", result.text)
     except KeyboardInterrupt:
         ui.print_error("Interrupted.")
         return 130
-    except httpx.HTTPStatusError as error:
-        ui.print_error(
-            f"The server at {config.endpoint} returned HTTP {error.response.status_code}. "
-            "Check the model name, API key and endpoint."
-        )
-        return 1
-    except httpx.HTTPError as error:
-        ui.print_error(
-            f"Could not talk to {config.endpoint}: {error.__class__.__name__}. "
-            "Is the server running and the endpoint correct?"
-        )
+    except ProviderError as error:
+        ui.print_error(str(error))
         return 1
     except (ValueError, OSError, UnicodeError) as error:
         ui.print_error(str(error))
@@ -455,6 +495,7 @@ def main():
         ui.print_error(message)
         sys.exit(1)
     ui.print_success(message)
+    provider.probe()
 
     context_prompt = load_context(config)
     base_system_prompt = "\n\n".join(

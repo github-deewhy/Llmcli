@@ -23,17 +23,20 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10
 
 PROFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 PROVIDERS = ("ollama", "openai_compat")
+TOOL_MODES = ("auto", "native", "text")
 
 # Where each setting may appear (spec 13, section 2.2).
 DEFAULTS_ONLY = frozenset({"profile", "theme", "context_file"})
 PROFILE_ONLY = frozenset({"provider", "endpoint", "model", "api_key"})
-SHARED = frozenset({"context_size", "max_tokens", "temperature", "top_p", "extra_body"})
+SHARED = frozenset(
+    {"context_size", "max_tokens", "temperature", "top_p", "extra_body", "request_timeout", "tool_mode"}
+)
 DEFAULTS_KEYS = DEFAULTS_ONLY | SHARED
 PROFILE_KEYS = PROFILE_ONLY | SHARED
 REQUIRED_IN_PROFILE = ("provider", "endpoint", "model")
 
-STRING_KEYS = frozenset({"profile", "theme", "context_file", "provider", "endpoint", "model"})
-INT_KEYS = frozenset({"context_size", "max_tokens"})
+STRING_KEYS = frozenset({"profile", "theme", "context_file", "provider", "endpoint", "model", "tool_mode"})
+INT_KEYS = frozenset({"context_size", "max_tokens", "request_timeout"})
 FLOAT_KEYS = frozenset({"temperature", "top_p"})
 TABLE_KEYS = frozenset({"extra_body"})
 
@@ -87,6 +90,8 @@ def _check_value(where: str, key: str, value: Any) -> None:
         raise ValueError(f"{where}: {key} must be {expected}.")
     if key == "provider" and value not in PROVIDERS:
         raise ValueError(f"{where}: provider must be one of {', '.join(PROVIDERS)}, got {value!r}.")
+    if key == "tool_mode" and value not in TOOL_MODES:
+        raise ValueError(f"{where}: tool_mode must be one of {', '.join(TOOL_MODES)}, got {value!r}.")
     if key == "endpoint":
         parsed = urlparse(value)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:

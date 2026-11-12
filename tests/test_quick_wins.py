@@ -57,22 +57,23 @@ def test_openai_compat_base_url(endpoint, expected):
     assert provider.base_url == expected
 
 
-def test_extra_body_and_sampling_reach_the_request(monkeypatch):
+def test_extra_body_and_sampling_reach_the_request():
+    import json
+
+    import httpx
+
     config = make_config("openai_compat", endpoint="http://localhost:8000/v1")
     config.temperature, config.top_p = 1.0, 0.95
     config.extra_body = {"chat_template_kwargs": {"enable_thinking": True}}
     sent = {}
 
-    class Resp:
-        def raise_for_status(self): pass
-        def json(self): return {"choices": [{"message": {"content": "hi"}}]}
+    def handler(request):
+        sent.update(url=str(request.url), body=json.loads(request.content))
+        return httpx.Response(200, text='data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n')
 
-    def fake_post(url, json, headers, timeout):
-        sent.update(url=url, body=json)
-        return Resp()
-
-    monkeypatch.setattr("llmcli.providers.openai_compat.httpx.post", fake_post)
-    OpenAICompatProvider(config).complete([{"role": "user", "content": "x"}], [])
+    provider = OpenAICompatProvider(config)
+    provider.client = httpx.Client(transport=httpx.MockTransport(handler))
+    list(provider.stream([{"role": "user", "content": "x"}]))
     assert sent["url"] == "http://localhost:8000/v1/chat/completions"
     assert sent["body"]["temperature"] == 1.0
     assert sent["body"]["top_p"] == 0.95

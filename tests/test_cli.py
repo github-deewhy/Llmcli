@@ -9,11 +9,13 @@ from llmcli.cli import _confirm_memory_clear, build_keybindings, handle_command
 from llmcli.config import Config
 from llmcli.history import Conversation
 from llmcli.memory import MemoryStore
+from llmcli.providers.fake import ScriptedProvider
 from llmcli.ui import THEME_PRESETS, StreamingUI
 
 
-class DummyProvider:
-    model = "old-model"
+class DummyProvider(ScriptedProvider):
+    def __init__(self):
+        super().__init__([], model="old-model")
 
 
 def test_keybindings_use_supported_prompt_toolkit_keys():

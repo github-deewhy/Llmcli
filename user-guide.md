@@ -47,10 +47,28 @@ Paths are confined to the project root; write access is limited to the explicit
 create/replace tools. Model-requested edits and test execution are never
 auto-approved.
 
-The model/provider must support structured tool calls. If it returns ordinary
-text without requesting a tool, the CLI reports that no files were changed and
-no tests were run. Ollama support depends on the selected model's tool-calling
-capability. One-shot `-p` mode remains text-only.
+Answers stream into the terminal while the model writes them, including when it
+uses tools. Ctrl-C stops the answer at once; the unfinished answer is not kept in
+the conversation.
+
+Tool calls work in two ways, chosen by `tool_mode` (see Configuration):
+
+- **Native**: the server returns structured tool calls. This is the default.
+- **Text**: the model writes the call as a JSON block,
+  `{"name": "read_file", "arguments": {"path": "app.py"}}`, and llmcli runs it.
+  Small models often do this even when native calls are offered. With
+  `tool_mode = "auto"` llmcli accepts such blocks and, after two in a row, switches
+  the session to text mode. A call with a wrong tool name or wrong arguments gets
+  one short error back so the model can correct it, once per question.
+
+If the model answers with ordinary text and no tool call, the CLI reports that no
+files were changed and no tests were run. One-shot `-p` mode remains text-only.
+
+Thinking models (for example `qwen3`) write reasoning before the answer. llmcli
+shows only a short "thinking…" line while that happens, never stores the reasoning
+in the conversation and never sends it back to the model. `/thinking on` shows the
+full text for the session. To switch thinking off, use the server's option in
+`extra_body`: `{ think = false }` for Ollama.
 
 ## Interactive commands
 
@@ -58,10 +76,12 @@ capability. One-shot `-p` mode remains text-only.
 | --- | --- |
 | `/help` or `/?` | List commands and their usage. |
 | `/clear` or `/reset` | Clear the current conversation, keeping its instructions and memory. |
-| `/status` or `/config` | Show active profile, provider, model, endpoint, and token settings. |
+| `/status` or `/config` | Show active profile, provider, model, endpoint, token and timeout settings, tool mode, what the server and model support (with where each value came from), and the speed of the last answer. |
 | `/system` or `/context` | Preview the system instructions and loaded context. |
 | `/model <name>` | Switch the active model for this session. |
 | `/models` | Ask the configured provider for its available models. |
+| `/probe` | Send one tiny request with a test tool and record whether the model makes a native tool call. Takes a few seconds to minutes on CPU. |
+| `/thinking [on\|off]` | Show or hide a thinking model's reasoning for this session (hidden by default). |
 | `/theme` | Show the current preset and available palettes. |
 | `/theme <name>` | Change the current session's colors to `ocean`, `forest`, `sunset`, or `mono`. |
 | `/memory` | Show memory command syntax and the local Markdown file paths. |
@@ -141,7 +161,9 @@ use letters, digits, `.`, `_` and `-`.
 | `max_tokens` | yes | yes | 4096 | Maximum generated tokens |
 | `temperature` | yes | yes | server default | Sampling temperature |
 | `top_p` | yes | yes | server default | Nucleus sampling |
-| `extra_body` | yes | yes | none | Table merged into OpenAI-compatible requests, e.g. `{ chat_template_kwargs = { enable_thinking = true } }`. A profile's value replaces the default one; they are not merged |
+| `extra_body` | yes | yes | none | Table merged into every request, e.g. `{ think = false }` for Ollama or `{ chat_template_kwargs = { enable_thinking = false } }` for llama.cpp or vLLM. A profile's value replaces the default one; they are not merged |
+| `request_timeout` | yes | yes | 300 | Seconds of silence allowed from the server before llmcli gives up, including model load and prompt processing. Raise it on slow CPU machines |
+| `tool_mode` | yes | yes | `auto` | `auto` (native, accepts text calls and switches after two), `native` (never reads text calls) or `text` (always uses text calls) |
 
 Server, model and key settings are profile-only, so a key can never be sent to another
 profile's endpoint. A setting in the wrong table, an unknown setting or a wrong type is
@@ -198,6 +220,13 @@ in the profile, and `default = "name"` becomes `profile = "name"` inside `[defau
 | `... missing required setting(s): endpoint` | Every profile needs `provider`, `endpoint` and `model`. |
 | `'default' at the top level is not used` | Write `profile = "name"` inside `[defaults]`. |
 | `not valid TOML: ... (at line N, column M)` | Syntax error at that position. |
+| `Cannot reach http://...` | The server is not running or the endpoint is wrong. |
+| `No data from ... for 300 s` | The server went silent; a large model may still be loading on CPU. Raise `request_timeout`. |
+| `... returned HTTP 404` | Usually the model is not installed (`ollama pull NAME`) or the URL is wrong. |
+| `... sent a response llmcli could not read` | The server sent something unexpected; check its version and log. |
+
+Network connections ignore proxy environment variables (`HTTP_PROXY`, `HTTPS_PROXY`)
+and `.netrc`, because no settings are read from the environment.
 
 ### `@file` attachments
 
