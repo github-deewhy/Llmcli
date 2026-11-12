@@ -1,7 +1,8 @@
 """Ollama native API provider."""
 
 import json
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 import httpx
 

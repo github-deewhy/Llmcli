@@ -4,7 +4,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from llmcli.config import Config, load_config
+from llmcli.config import load_config
 
 
 def test_config_defaults():

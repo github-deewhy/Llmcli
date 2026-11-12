@@ -5,11 +5,9 @@ import json
 import os
 import shlex
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
-
-from rich.panel import Panel
-from rich.syntax import Syntax
+from typing import Any
 
 from llmcli.security import IGNORED_DIRECTORIES, filename_block_reason
 from llmcli.ui import StreamingUI
@@ -162,14 +160,51 @@ class ProjectCodingTools:
             result = handler(arguments, confirm)
         except (OSError, ValueError, UnicodeError) as error:
             result = {"error": str(error)}
+        return self._fit(result)
+
+    def _fit(self, result: Any) -> str:
+        """Encode a result as JSON no longer than MAX_TOOL_RESULT, always valid JSON.
+
+        Shrinks the largest top-level string (keeping its head and tail) or list
+        (dropping trailing items) until the encoding fits, and records what was
+        omitted so the model can ask for a narrower read.
+        """
         encoded = self._json(result)
-        if len(encoded) > MAX_TOOL_RESULT:
-            encoded = self._json({
-                "truncated": True,
-                "output": encoded[:MAX_TOOL_RESULT // 8],
-                "note": "Tool output was truncated to fit the agent context.",
-            })
-        return encoded
+        if len(encoded) <= MAX_TOOL_RESULT:
+            return encoded
+        if not isinstance(result, dict):
+            return self._json({"truncated": True, "note": "Result too large; narrow the request."})
+
+        result = dict(result)
+        result["truncated"] = True
+        for _ in range(40):
+            encoded = self._json(result)
+            if len(encoded) <= MAX_TOOL_RESULT:
+                return encoded
+            key = max(
+                (k for k, v in result.items() if isinstance(v, (str, list)) and len(v) > 1),
+                key=lambda k: len(self._json(result[k])),
+                default=None,
+            )
+            if key is None:
+                break
+            value = result[key]
+            if isinstance(value, list):
+                kept = len(value) // 2
+                result[key] = value[:kept]
+                result[f"omitted_{key}"] = result.get(f"omitted_{key}", 0) + len(value) - kept
+            else:
+                value_size = len(self._json(value))
+                available = MAX_TOOL_RESULT - (len(encoded) - value_size) - 120
+                keep = int(len(value) * max(available, 0) / value_size * 0.95)
+                if keep < 200:
+                    break
+                head, tail = keep * 2 // 3, keep // 3
+                omitted = len(value) - head - tail
+                if omitted <= 0:
+                    break
+                result[key] = f"{value[:head]}\n[... {omitted} characters omitted ...]\n{value[-tail:]}"
+        return self._json({"truncated": True, "note": "Result too large; narrow the request."})
 
     def _resolve_path(self, value: str, must_exist: bool = True) -> Path:
         if not isinstance(value, str) or not value.strip():
@@ -223,7 +258,7 @@ class ProjectCodingTools:
         start = self._resolve_path(arguments.get("path", ".")) if arguments.get("path") else self.root
         if not start.is_dir():
             raise ValueError("The requested path is not a directory.")
-        files = []
+        files: list[str] = []
         truncated = False
         for path in self._walk_files(start):
             if len(files) == 300:

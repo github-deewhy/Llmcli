@@ -3,6 +3,28 @@
 Format: newest first. Update this file and the docs (README.md, user-guide.md,
 .env.example, profiles.toml.example) in the same change as the code.
 
+## 0.2.1
+
+### Changed
+- Project instruction file is now `AGENTS.md`; `CONTEXT.md` is still read as a legacy
+  alias when no `AGENTS.md` exists. `CONTEXT.md.example` renamed to `AGENTS.md.example`.
+- `run_oneshot` (`-p`) returns an exit code and prints short messages for connection,
+  HTTP and value errors instead of a traceback (exit 1; 130 on Ctrl-C).
+
+### Fixed
+- `LLMCLI_CONTEXT_SIZE` / `LLMCLI_MAX_TOKENS` with a bad value (text, zero, negative) now
+  give a clear configuration error instead of a traceback.
+- Oversized tool results are shrunk (head and tail of the largest field, or fewer list
+  items) to fit the budget and always stay valid JSON; previously only 1/8 of the budget
+  was kept and the JSON could be cut mid-string.
+- Memory and instruction files are capped at 32,000 bytes when read; `/memory add`
+  refuses to grow a file past the cap.
+
+### Added
+- GitHub Actions CI (Python 3.10 to 3.13 on Linux, 3.12 on macOS and Windows), ruff, mypy.
+- `LICENSE` placeholder (all rights reserved until a licence is chosen), `SECURITY.md`.
+- 22 regression tests (107 total).
+
 ## 0.2.0
 
 ### Added

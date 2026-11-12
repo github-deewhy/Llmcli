@@ -111,3 +111,22 @@ def test_conversation_trimming_keeps_tool_messages_with_their_turn():
 
     assert [message["role"] for message in conversation.messages] == ["user"]
     assert conversation.messages[0]["content"] == "new question"
+
+
+def test_agents_md_is_default_and_context_md_is_legacy_alias(tmp_path, monkeypatch):
+    from llmcli.config import Config
+    from llmcli.context import load_context
+
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    home.mkdir()
+    project.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(project)
+    config = Config("ollama", "m", "http://localhost:11434", "", 8192, 1024, "AGENTS.md")
+
+    (project / "CONTEXT.md").write_text("legacy", encoding="utf-8")
+    assert load_context(config) == "legacy"
+
+    (project / "AGENTS.md").write_text("primary", encoding="utf-8")
+    assert load_context(config) == "primary"

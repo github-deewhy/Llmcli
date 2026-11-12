@@ -28,9 +28,9 @@ if [ ! -f ~/.llmcli/.env ]; then
     echo "Created default ~/.llmcli/.env"
 fi
 
-if [ ! -f ~/.llmcli/CONTEXT.md ]; then
-    cp CONTEXT.md.example ~/.llmcli/CONTEXT.md
-    echo "Created default ~/.llmcli/CONTEXT.md"
+if [ ! -f ~/.llmcli/AGENTS.md ]; then
+    cp AGENTS.md.example ~/.llmcli/AGENTS.md
+    echo "Created default ~/.llmcli/AGENTS.md"
 fi
 
 if [ ! -f ~/.llmcli/profiles.toml ]; then

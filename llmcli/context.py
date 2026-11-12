@@ -1,26 +1,34 @@
-"""Handles loading and parsing of the project context file."""
+"""Handles loading and parsing of the project instruction file."""
 
 from pathlib import Path
 
 from llmcli.config import Config
+from llmcli.security import read_capped_text
+
+DEFAULT_CONTEXT_FILE = "AGENTS.md"
+LEGACY_CONTEXT_FILE = "CONTEXT.md"
+
+
+def candidate_names(config: Config) -> list[str]:
+    """Filenames to look for, in order. CONTEXT.md is a legacy alias for AGENTS.md."""
+    names = [config.context_file]
+    if config.context_file == DEFAULT_CONTEXT_FILE:
+        names.append(LEGACY_CONTEXT_FILE)
+    return names
 
 
 def load_context(config: Config) -> str:
     """
-    Load the context file.
+    Load the project instruction file (AGENTS.md, or legacy CONTEXT.md).
     Precedence: Current Working Directory > ~/.llmcli/ > ~/.
+    Within a location, the configured name wins over the legacy alias.
+    File size is capped (see security.MAX_INSTRUCTION_BYTES).
     """
-    cwd_path = Path.cwd() / config.context_file
     home_dir = Path.home()
-    home_paths = [
-        home_dir / ".llmcli" / config.context_file,
-        home_dir / config.context_file,
-    ]
-
-    if cwd_path.exists() and cwd_path.is_file():
-        return cwd_path.read_text(encoding="utf-8")
-    for home_path in home_paths:
-        if home_path.exists() and home_path.is_file():
-            return home_path.read_text(encoding="utf-8")
-
-    return ""  # No context file found, which is acceptable
+    folders = [Path.cwd(), home_dir / ".llmcli", home_dir]
+    for folder in folders:
+        for name in candidate_names(config):
+            path = folder / name
+            if path.is_file():
+                return read_capped_text(path)
+    return ""  # No instruction file found, which is acceptable

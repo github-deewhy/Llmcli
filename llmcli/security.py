@@ -48,3 +48,20 @@ def filename_block_reason(path: Path) -> str | None:
     ):
         return "Access to credential or private-key files is blocked."
     return None
+
+
+MAX_INSTRUCTION_BYTES = 32_000
+
+
+def read_capped_text(path, limit: int = MAX_INSTRUCTION_BYTES) -> str:
+    """Read a UTF-8 text file, cutting it at ``limit`` bytes with a visible notice.
+
+    Used for memory and project-instruction files, which are sent in every prompt
+    and must not be able to fill a small context window.
+    """
+    with open(path, "rb") as handle:
+        data = handle.read(limit + 1)
+    if len(data) <= limit:
+        return data.decode("utf-8", errors="replace")
+    text = data[:limit].decode("utf-8", errors="ignore")
+    return f"{text}\n\n[truncated: {path} exceeds {limit} bytes]"

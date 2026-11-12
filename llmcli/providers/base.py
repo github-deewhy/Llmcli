@@ -1,9 +1,10 @@
 """Abstract base class for all LLM providers."""
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
 import json
-from typing import Any, Iterator
+from abc import ABC, abstractmethod
+from collections.abc import Iterator
+from dataclasses import dataclass
+from typing import Any
 from uuid import uuid4
 
 

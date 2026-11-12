@@ -23,7 +23,8 @@ def test_read_and_search_are_project_scoped_and_block_environment_files(tmp_path
     (root / ".env").write_text("TOKEN=secret", encoding="utf-8")
     outside = tmp_path / "outside.txt"
     outside.write_text("outside", encoding="utf-8")
-    approve = lambda _message: True
+    def approve(_message):
+        return True
 
     read = json.loads(tools.execute("read_file", {"path": "app.py"}, approve))
     blocked_env = json.loads(tools.execute("read_file", {"path": ".env"}, approve))

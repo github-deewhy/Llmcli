@@ -2,8 +2,8 @@
 
 from io import StringIO
 
-from rich.console import Console
 from prompt_toolkit.styles import Style
+from rich.console import Console
 
 from llmcli.cli import _confirm_memory_clear, build_keybindings, handle_command
 from llmcli.config import Config

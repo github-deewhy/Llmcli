@@ -1,7 +1,8 @@
 """OpenAI-compatible API provider (LM Studio, vLLM, OpenRouter, Groq, etc.)."""
 
 import json
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx

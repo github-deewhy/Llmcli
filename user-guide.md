@@ -195,7 +195,7 @@ Without profiles, configuration is set with environment variables or `.env` file
 | `LLMCLI_TEMPERATURE` | Optional sampling temperature. |
 | `LLMCLI_TOP_P` | Optional nucleus-sampling value. |
 | `LLMCLI_EXTRA_BODY` | Optional JSON object merged into OpenAI-compatible requests, e.g. `{"chat_template_kwargs":{"enable_thinking":true}}`. |
-| `LLMCLI_CONTEXT_FILE` | Project context filename; defaults to `CONTEXT.md`. |
+| `LLMCLI_CONTEXT_FILE` | Project context filename; defaults to `AGENTS.md`; a legacy `CONTEXT.md` is still read when no `AGENTS.md` is found. |
 | `LLMCLI_THEME` | Default color preset. |
 
 ### `@file` attachments

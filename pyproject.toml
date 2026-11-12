@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llmcli"
-version = "0.2.0"
+version = "0.2.1"
 description = "A clean, streaming CLI for local and public LLM providers"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,7 +19,28 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
+    "ruff>=0.6",
+    "mypy>=1.10",
 ]
 
 [project.scripts]
 llmcli = "llmcli.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["llmcli*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+check_untyped_defs = false

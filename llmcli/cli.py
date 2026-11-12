@@ -2,9 +2,10 @@
 
 import argparse
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
+import httpx
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
@@ -169,7 +170,7 @@ def _handle_memory_command(
         if action == "show":
             scope = details.lower() or "all"
             if scope == "all":
-                scopes = ("global", "project")
+                scopes: tuple[str, ...] = ("global", "project")
             elif scope in memory_store.paths:
                 scopes = (scope,)
             else:
@@ -214,8 +215,8 @@ def _handle_memory_command(
             if not confirm(f"Type 'clear' to erase {scope} memory: "):
                 ui.print_info("Memory clear cancelled.")
                 return
-            scopes = ("global", "project") if scope == "all" else (scope,)
-            for selected_scope in scopes:
+            clear_scopes = ("global", "project") if scope == "all" else (scope,)
+            for selected_scope in clear_scopes:
                 memory_store.clear(selected_scope)
             conversation.system_prompt = memory_store.compose_system_prompt()
             ui.print_success(f"Cleared {scope} memory.")
@@ -292,7 +293,7 @@ def run_repl(config, provider, conversation: Conversation, ui: StreamingUI, memo
     history_file = Path.home() / ".llmcli" / "history.txt"
     history_file.parent.mkdir(parents=True, exist_ok=True)
 
-    session = PromptSession(
+    session: PromptSession[str] = PromptSession(
         history=FileHistory(str(history_file)),
         multiline=True,
         key_bindings=build_keybindings(),
@@ -352,13 +353,36 @@ def run_repl(config, provider, conversation: Conversation, ui: StreamingUI, memo
         ui.console.print()
 
 
-def run_oneshot(config, provider, conversation: Conversation, ui: StreamingUI, prompt: str):
-    """Run a single prompt and exit (useful for scripting/SSH)."""
-    resolved_input = resolve_attachments(prompt)
-    conversation.add("user", resolved_input)
+def run_oneshot(config, provider, conversation: Conversation, ui: StreamingUI, prompt: str) -> int:
+    """Run a single prompt and exit (useful for scripting/SSH).
 
-    response = ui.render_stream(provider.chat(conversation.get_messages_for_api(), stream=True))
-    conversation.add("assistant", response)
+    Returns a process exit code: 0 on success, 1 on a provider or I/O error,
+    130 when interrupted. Errors are printed as short messages, never tracebacks.
+    """
+    try:
+        resolved_input = resolve_attachments(prompt)
+        conversation.add("user", resolved_input)
+        response = ui.render_stream(provider.chat(conversation.get_messages_for_api(), stream=True))
+        conversation.add("assistant", response)
+    except KeyboardInterrupt:
+        ui.print_error("Interrupted.")
+        return 130
+    except httpx.HTTPStatusError as error:
+        ui.print_error(
+            f"The server at {config.endpoint} returned HTTP {error.response.status_code}. "
+            "Check the model name, API key and endpoint."
+        )
+        return 1
+    except httpx.HTTPError as error:
+        ui.print_error(
+            f"Could not talk to {config.endpoint}: {error.__class__.__name__}. "
+            "Is the server running and the endpoint correct?"
+        )
+        return 1
+    except (ValueError, OSError, UnicodeError) as error:
+        ui.print_error(str(error))
+        return 1
+    return 0
 
 
 def main():
@@ -452,7 +476,7 @@ def main():
             prompt_text = sys.stdin.read()
         else:
             prompt_text = args.prompt
-        run_oneshot(config, provider, conversation, ui, prompt_text)
+        sys.exit(run_oneshot(config, provider, conversation, ui, prompt_text))
     else:
         run_repl(config, provider, conversation, ui, memory_store)
 

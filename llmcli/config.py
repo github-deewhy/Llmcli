@@ -1,7 +1,7 @@
 """Configuration loader with strict precedence chain."""
 
-import os
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -124,6 +124,18 @@ def load_config(cli_overrides: dict | None = None, profile: str | None = None) -
         except ValueError as error:
             raise ValueError(f"LLMCLI_{key.upper()} must be a number, got {value!r}.") from error
 
+    def positive_int(key: str, default: int) -> int:
+        value = get_val(key, default)
+        try:
+            number = int(str(value).strip())
+        except ValueError as error:
+            raise ValueError(
+                f"LLMCLI_{key.upper()} must be a whole number, got {value!r}."
+            ) from error
+        if number <= 0:
+            raise ValueError(f"LLMCLI_{key.upper()} must be greater than zero, got {number}.")
+        return number
+
     raw_extra = get_val("extra_body", "")
     extra_body: dict[str, Any] = {}
     if isinstance(raw_extra, dict):
@@ -141,9 +153,9 @@ def load_config(cli_overrides: dict | None = None, profile: str | None = None) -
         model=str(get_val("model", "qwen2.5-coder")),
         endpoint=str(get_val("endpoint", "http://localhost:11434")).rstrip("/"),
         api_key=str(get_val("api_key", "")),
-        context_size=int(get_val("context_size", 8192)),
-        max_tokens=int(get_val("max_tokens", 4096)),
-        context_file=str(get_val("context_file", "CONTEXT.md")),
+        context_size=positive_int("context_size", 8192),
+        max_tokens=positive_int("max_tokens", 4096),
+        context_file=str(get_val("context_file", "AGENTS.md")),
         theme=str(get_val("theme", "ocean")).lower(),
         temperature=optional_float("temperature"),
         top_p=optional_float("top_p"),

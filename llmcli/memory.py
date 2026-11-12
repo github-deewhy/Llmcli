@@ -4,6 +4,8 @@ import hashlib
 import re
 from pathlib import Path
 
+from llmcli.security import MAX_INSTRUCTION_BYTES, read_capped_text
+
 
 class MemoryStore:
     def __init__(
@@ -32,7 +34,7 @@ class MemoryStore:
             elif not path.is_file():
                 raise OSError(f"Memory path is not a file: {path}")
             else:
-                memories[scope] = path.read_text(encoding="utf-8")
+                memories[scope] = read_capped_text(path)
         return memories
 
     def compose_system_prompt(self, memories: dict[str, str] | None = None) -> str:
@@ -53,6 +55,11 @@ class MemoryStore:
         path = self.paths[scope]
         path.parent.mkdir(parents=True, exist_ok=True)
         existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+        if len(existing.encode("utf-8")) + len(content.encode("utf-8")) > MAX_INSTRUCTION_BYTES:
+            raise ValueError(
+                f"{scope} memory would exceed {MAX_INSTRUCTION_BYTES} bytes. "
+                "Clear or shorten it first (it is sent with every prompt)."
+            )
         separator = "\n" if existing and not existing.endswith("\n\n") else ""
         with path.open("a", encoding="utf-8") as memory_file:
             if separator:
