@@ -6,8 +6,8 @@ A focused coding assistant for local and OpenAI-compatible language models.
 
 - Interactive REPL with history and Enter-to-send input
 - Streaming responses with Rich rendering
-- Local Ollama support and OpenAI-compatible endpoints (Gemini, NVIDIA NIM, OpenRouter, LM Studio, ...)
-- Named provider profiles: configure several models/services once, switch with `/profile`
+- Local first: Ollama, plus OpenAI-compatible local servers (llama.cpp `llama-server`, LM Studio, vLLM); a remote OpenAI-compatible URL is optional
+- One configuration file with named profiles; switch servers with `/profile`
 - Context file loading from project or home directory
 - `@file` attachment resolution for including file contents in prompts
 - Coding-focused system prompt, with optional project context
@@ -32,45 +32,38 @@ Or run directly:
 python -m llmcli
 ```
 
-## Environment configuration
+## Configuration
 
-Copy the example file and edit it as needed:
+With a local Ollama on its default port (`http://localhost:11434`) llmcli works with
+no configuration at all. For anything else, edit one file, `~/.llmcli/config.toml`
+(`setup.sh` creates it from `config.toml.example`):
 
-```bash
-cp .env.example ~/.llmcli/.env
+```toml
+[defaults]
+profile = "llamacpp"
+
+[profiles.llamacpp]
+provider = "openai_compat"
+endpoint = "http://localhost:9931/v1"
+model = "local-model"
 ```
 
-Supported variables (or use [profiles](#profiles) for several setups):
-
-- `LLMCLI_PROVIDER`: `ollama` or `openai_compat`
-- `LLMCLI_MODEL`: default model name
-- `LLMCLI_ENDPOINT`: API base URL
-- `LLMCLI_API_KEY`: optional API key
-- `LLMCLI_CONTEXT_SIZE`: model context size
-- `LLMCLI_MAX_TOKENS`: max generation length
-- `LLMCLI_CONTEXT_FILE`: project context file name
-- `LLMCLI_TEMPERATURE`, `LLMCLI_TOP_P`: optional sampling overrides
-- `LLMCLI_EXTRA_BODY`: optional JSON object merged into OpenAI-compatible requests
-- `LLMCLI_PROFILE`: name of the profile to activate (see below)
-- `LLMCLI_THEME`: CLI color preset (`ocean`, `forest`, `sunset`, or `mono`)
-
-Interactive agent workflows require a model/provider that supports structured
-tool calls. One-shot `-p` prompts remain text-only.
-
-## Profiles
-
-Define each provider setup once in `~/.llmcli/profiles.toml` (`setup.sh` installs a
-starter from `profiles.toml.example`), then choose between them:
+That file is the only place settings are read from. Command-line flags (`--profile`,
+`--model`, `--theme`) override it for one run. No `.env` file and no environment
+variable is read. A local server needs no API key; a remote URL may have one
+`api_key` in its profile, and llmcli warns if the file is readable by other users.
 
 ```bash
 llmcli --list-profiles          # see what is configured
-llmcli --profile nvidia         # start with a profile
+llmcli --profile vllm           # start with a profile
 ```
 
-Inside the CLI use `/profiles` and `/profile gemini` (add `--keep` to carry the
-conversation text over). API keys are never stored in `profiles.toml`; each profile
-names an environment variable with `api_key_env`. Details, precedence rules and
-troubleshooting are in [user-guide.md](./user-guide.md#profiles).
+Inside the CLI use `/profiles` and `/profile <name>` (add `--keep` to carry the
+conversation text over). Every setting, the precedence rules and troubleshooting
+are in [user-guide.md](./user-guide.md#configuration).
+
+Interactive agent workflows require a model/provider that supports structured
+tool calls. One-shot `-p` prompts remain text-only.
 
 ## Example
 

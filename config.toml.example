@@ -1,0 +1,52 @@
+# llmcli configuration: the only settings file. Copy to ~/.llmcli/config.toml
+# (setup.sh does this for you) and keep it private: chmod 600 ~/.llmcli/config.toml
+#
+# Precedence: command-line flags > the active profile > [defaults] > built-in defaults.
+# Nothing else is read: no .env files and no environment variables.
+# With no file at all, llmcli uses a local Ollama at http://localhost:11434.
+
+[defaults]
+profile = "ollama"          # used when you do not pass --profile
+theme = "ocean"             # ocean, forest, sunset or mono
+context_file = "AGENTS.md"  # project instruction file
+context_size = 8192         # tokens; a profile may override this
+max_tokens = 4096           # a profile may override this
+# temperature = 0.2         # optional; a profile may override this
+# top_p = 0.95              # optional; a profile may override this
+
+# One profile per server. provider, endpoint and model are required.
+# Allowed in a profile: provider, endpoint, model, api_key,
+# context_size, max_tokens, temperature, top_p, extra_body.
+
+[profiles.ollama]
+provider = "ollama"
+endpoint = "http://localhost:11434"
+model = "qwen2.5-coder"
+
+# llama.cpp llama-server. Recent builds listen on port 9931 by default;
+# older builds used 8080. Use the port your server prints at start-up.
+# [profiles.llamacpp]
+# provider = "openai_compat"
+# endpoint = "http://localhost:9931/v1"
+# model = "local-model"     # llama-server serves the model it was started with
+
+# LM Studio local server (default port 1234). Use a model id from /models.
+# [profiles.lmstudio]
+# provider = "openai_compat"
+# endpoint = "http://localhost:1234/v1"
+# model = "REPLACE-ME"
+
+# vLLM (vllm serve, default port 8000). Use the model name you served.
+# [profiles.vllm]
+# provider = "openai_compat"
+# endpoint = "http://localhost:8000/v1"
+# model = "REPLACE-ME"
+
+# A remote OpenAI-compatible URL is optional. Only then add api_key; llmcli warns
+# if this file is readable by other users while it contains a key.
+# [profiles.remote]
+# provider = "openai_compat"
+# endpoint = "https://your-server.example/v1"
+# model = "REPLACE-ME"
+# api_key = "REPLACE-ME"
+# extra_body = { chat_template_kwargs = { enable_thinking = true } }

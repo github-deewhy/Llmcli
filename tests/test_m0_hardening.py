@@ -30,19 +30,23 @@ def isolated(tmp_path, monkeypatch):
     return home, project
 
 
-# --- safe int parsing ------------------------------------------------------
+# --- safe int parsing (now from config.toml) --------------------------------
 
-@pytest.mark.parametrize("key", ["LLMCLI_CONTEXT_SIZE", "LLMCLI_MAX_TOKENS"])
-@pytest.mark.parametrize("bad", ["abc", "8k", "0", "-5", "1.5"])
-def test_bad_integer_settings_give_clear_error_not_traceback(isolated, monkeypatch, key, bad):
-    monkeypatch.setenv(key, bad)
+@pytest.mark.parametrize("key", ["context_size", "max_tokens"])
+@pytest.mark.parametrize("bad", ['"abc"', '"8k"', "0", "-5", "1.5"])
+def test_bad_integer_settings_give_clear_error_not_traceback(isolated, key, bad):
+    home, _ = isolated
+    (home / ".llmcli").mkdir()
+    (home / ".llmcli" / "config.toml").write_text(f"[defaults]\n{key} = {bad}\n")
     with pytest.raises(ValueError) as error:
         load_config({})
     assert key in str(error.value)
 
 
-def test_valid_integer_settings_still_work(isolated, monkeypatch):
-    monkeypatch.setenv("LLMCLI_CONTEXT_SIZE", " 16384 ")
+def test_valid_integer_settings_still_work(isolated):
+    home, _ = isolated
+    (home / ".llmcli").mkdir()
+    (home / ".llmcli" / "config.toml").write_text("[defaults]\ncontext_size = 16384\n")
     assert load_config({}).context_size == 16384
 
 

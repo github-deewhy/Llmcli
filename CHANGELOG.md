@@ -1,7 +1,38 @@
 # Changelog
 
 Format: newest first. Update this file and the docs (README.md, user-guide.md,
-.env.example, profiles.toml.example) in the same change as the code.
+config.toml.example) in the same change as the code.
+
+## 0.3.0
+
+Breaking: configuration moves to one file. See "Upgrading from 0.2" in user-guide.md.
+
+### Changed
+- All settings now come from `~/.llmcli/config.toml` (`[defaults]` plus
+  `[profiles.<name>]`). Precedence: command-line flags > active profile > `[defaults]` >
+  built-in defaults. With no file, a local Ollama is used.
+- The default profile is `profile = "<name>"` inside `[defaults]` (was top-level
+  `default`). With exactly one profile and no default, that profile is used; with
+  several and no default, llmcli stops and asks for `--profile`.
+- `provider`, `endpoint` and `model` are required in every profile and allowed only
+  there; `theme` and `context_file` are allowed only in `[defaults]`.
+- `/profiles` and `--list-profiles` show whether a profile has a key (`set`/`none`)
+  instead of an environment-variable name. `/status` shows the configuration source.
+
+### Removed
+- `./.env`, `~/.llmcli/.env`, every `LLMCLI_*` environment variable and `api_key_env`
+  are no longer read. A remote URL's key is an optional `api_key` in its profile.
+- `~/.llmcli/profiles.toml`, `.env.example`, `profiles.toml.example`, the
+  `python-dotenv` dependency, and cloud-vendor examples in code, tests and docs.
+
+### Added
+- `config.toml.example` with Ollama active and commented profiles for llama.cpp
+  `llama-server`, LM Studio and vLLM.
+- Start-up warning when `config.toml` contains an API key and other users can read it.
+- Start-up notice naming old configuration that is now ignored (`~/.llmcli/profiles.toml`,
+  `~/.llmcli/.env`, `LLMCLI_*` variable names). A project's own `.env` is not checked.
+- Tests for precedence, profile selection, placement rules, validation, key redaction,
+  permissions, the legacy notice, and a repository check for cloud-vendor names.
 
 ## 0.2.1
 
