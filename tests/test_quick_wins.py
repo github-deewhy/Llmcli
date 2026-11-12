@@ -1,8 +1,8 @@
-"""Regression tests for config precedence, provider quirks, and @file resolution."""
+"""Regression tests for provider quirks and @file resolution."""
 
 import pytest
 
-from llmcli.config import Config, load_config
+from llmcli.config import Config
 from llmcli.file_resolver import MAX_ATTACHMENT_BYTES, resolve_attachments
 from llmcli.providers.ollama import OllamaProvider
 from llmcli.providers.openai_compat import OpenAICompatProvider
@@ -27,38 +27,6 @@ def make_config(provider="ollama", model="qwen2.5-coder", endpoint="http://local
     return Config(provider, model, endpoint, "", 8192, 1024, "CONTEXT.md")
 
 
-# --- config precedence -----------------------------------------------------
-
-def test_os_env_beats_cwd_dotenv(isolated, monkeypatch):
-    _, project = isolated
-    (project / ".env").write_text("LLMCLI_MODEL=from-dotenv\n")
-    monkeypatch.setenv("LLMCLI_MODEL", "from-os-env")
-    assert load_config().model == "from-os-env"
-
-
-def test_cwd_dotenv_beats_home_dotenv(isolated):
-    home, project = isolated
-    (home / ".llmcli").mkdir()
-    (home / ".llmcli" / ".env").write_text("LLMCLI_MODEL=home\nLLMCLI_THEME=forest\n")
-    (project / ".env").write_text("LLMCLI_MODEL=project\n")
-    config = load_config()
-    assert config.model == "project"
-    assert config.theme == "forest"  # falls through to the home file
-
-
-def test_cli_override_beats_everything(isolated, monkeypatch):
-    monkeypatch.setenv("LLMCLI_MODEL", "from-os-env")
-    assert load_config({"model": "cli"}).model == "cli"
-
-
-def test_load_config_does_not_mutate_environment(isolated):
-    import os
-    _, project = isolated
-    (project / ".env").write_text("LLMCLI_MODEL=from-dotenv\n")
-    load_config()
-    assert "LLMCLI_MODEL" not in os.environ
-
-
 # --- providers --------------------------------------------------------------
 
 @pytest.mark.parametrize(
@@ -78,10 +46,9 @@ def test_ollama_model_matching(model, installed, expected):
 @pytest.mark.parametrize(
     "endpoint, expected",
     [
-        ("https://integrate.api.nvidia.com/v1", "https://integrate.api.nvidia.com/v1"),
-        ("https://openrouter.ai/api/v1/", "https://openrouter.ai/api/v1"),
-        ("https://generativelanguage.googleapis.com/v1beta/openai/",
-         "https://generativelanguage.googleapis.com/v1beta/openai"),
+        ("http://localhost:9931/v1", "http://localhost:9931/v1"),
+        ("https://example.invalid/api/v1/", "https://example.invalid/api/v1"),
+        ("https://example.invalid/v1beta/compat/", "https://example.invalid/v1beta/compat"),
         ("http://localhost:1234", "http://localhost:1234/v1"),
     ],
 )
@@ -91,7 +58,7 @@ def test_openai_compat_base_url(endpoint, expected):
 
 
 def test_extra_body_and_sampling_reach_the_request(monkeypatch):
-    config = make_config("openai_compat", endpoint="https://integrate.api.nvidia.com/v1")
+    config = make_config("openai_compat", endpoint="http://localhost:8000/v1")
     config.temperature, config.top_p = 1.0, 0.95
     config.extra_body = {"chat_template_kwargs": {"enable_thinking": True}}
     sent = {}
@@ -106,25 +73,10 @@ def test_extra_body_and_sampling_reach_the_request(monkeypatch):
 
     monkeypatch.setattr("llmcli.providers.openai_compat.httpx.post", fake_post)
     OpenAICompatProvider(config).complete([{"role": "user", "content": "x"}], [])
-    assert sent["url"] == "https://integrate.api.nvidia.com/v1/chat/completions"
+    assert sent["url"] == "http://localhost:8000/v1/chat/completions"
     assert sent["body"]["temperature"] == 1.0
     assert sent["body"]["top_p"] == 0.95
     assert sent["body"]["chat_template_kwargs"] == {"enable_thinking": True}
-
-
-def test_config_parses_sampling_and_extra_body(isolated, monkeypatch):
-    monkeypatch.setenv("LLMCLI_TEMPERATURE", "1")
-    monkeypatch.setenv("LLMCLI_TOP_P", "0.95")
-    monkeypatch.setenv("LLMCLI_EXTRA_BODY", '{"chat_template_kwargs": {"enable_thinking": true}}')
-    config = load_config()
-    assert (config.temperature, config.top_p) == (1.0, 0.95)
-    assert config.extra_body == {"chat_template_kwargs": {"enable_thinking": True}}
-
-
-def test_config_rejects_bad_extra_body(isolated, monkeypatch):
-    monkeypatch.setenv("LLMCLI_EXTRA_BODY", "{nope")
-    with pytest.raises(ValueError, match="EXTRA_BODY"):
-        load_config()
 
 
 # --- @file attachments ---------------------------------------------------------

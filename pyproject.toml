@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llmcli"
-version = "0.2.1"
+version = "0.3.0"
 description = "A clean, streaming CLI for local and public LLM providers"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,7 +12,6 @@ dependencies = [
     "rich>=13.0.0",
     "prompt-toolkit>=3.0.0",
     "httpx>=0.27.0",
-    "python-dotenv>=1.0.0",
     "tomli>=2.0.1; python_version < '3.11'",
 ]
 

@@ -16,8 +16,8 @@ llmcli --list-profiles
 - `-p, --prompt PROMPT`: send one prompt and exit. Use `-p -` to read the prompt
   from standard input.
 - `--model MODEL`: override the configured model for this run (wins over a profile's model).
-- `--profile NAME`: start with a named profile from `~/.llmcli/profiles.toml`.
-- `--list-profiles`: show configured profiles and whether their API keys are set, then exit.
+- `--profile NAME`: start with a named profile from `~/.llmcli/config.toml`.
+- `--list-profiles`: show the profiles in `~/.llmcli/config.toml` and whether each has an API key, then exit.
 - `--theme THEME`: choose `ocean`, `forest`, `sunset`, or `mono` for this run.
 - `-h, --help`: show command-line options.
 
@@ -72,9 +72,9 @@ capability. One-shot `-p` mode remains text-only.
 | `/memory refresh` | Reload memory files from disk into the current session. |
 | `/quit` or `/exit` | Exit the interactive CLI. |
 
-Themes chosen with `/theme` apply for the current process. Set `LLMCLI_THEME` in
-the environment or `.env` file to select a default for future runs; `--theme`
-overrides that setting.
+Themes chosen with `/theme` apply for the current process. Set `theme` in
+`[defaults]` of `~/.llmcli/config.toml` to select a default for future runs;
+`--theme` overrides that setting.
 
 ## Local persistent memory
 
@@ -93,110 +93,111 @@ directly if you prefer, then run `/memory refresh` to load edits into an
 already-running session. `/memory add` updates the active session immediately
 as well as saving the note.
 
-## Profiles
+## Configuration
 
-A profile is one complete provider setup: provider, endpoint, model, API key source, and
-options. Define as many as you like and switch between them without editing `.env`.
+All settings live in one file, `~/.llmcli/config.toml`. llmcli reads it and never
+writes it. No `.env` file (in your home folder or in a project) and no environment
+variable is read for settings.
 
-### Setting up
+With no file, llmcli uses a local Ollama: provider `ollama`, endpoint
+`http://localhost:11434`, model `qwen2.5-coder`. `setup.sh` copies
+`config.toml.example` to `~/.llmcli/config.toml` (mode 600) if the file does not exist.
 
-Create `~/.llmcli/profiles.toml` (`setup.sh` copies `profiles.toml.example` there if the
-file does not exist):
+### The file
 
 ```toml
-# default = "local"        # optional; must be above the [profiles.*] sections
+[defaults]
+profile = "ollama"          # profile used when --profile is not given
+theme = "ocean"
+context_size = 8192
 
-[profiles.local]
+[profiles.ollama]
 provider = "ollama"
 endpoint = "http://localhost:11434"
 model = "qwen2.5-coder"
 
-[profiles.nvidia]
+[profiles.vllm]
 provider = "openai_compat"
-endpoint = "https://integrate.api.nvidia.com/v1"
-model = "nvidia/nemotron-3-ultra-550b-a55b"
-api_key_env = "NVIDIA_API_KEY"
-max_tokens = 16384
-temperature = 1
-top_p = 0.95
-extra_body = { chat_template_kwargs = { enable_thinking = true } }
+endpoint = "http://localhost:8000/v1"
+model = "Qwen/Qwen2.5-Coder-7B-Instruct"
+context_size = 32768        # overrides [defaults] for this profile only
 ```
 
-Then put the real key in your environment or in `~/.llmcli/.env`:
+Only two kinds of table exist: `[defaults]` and `[profiles.<name>]`. Profile names may
+use letters, digits, `.`, `_` and `-`.
 
-```
-NVIDIA_API_KEY=nvapi-...
-```
+### Where each setting goes
 
-Profile names may use letters, digits, `.`, `_` and `-`. Allowed settings are `provider`,
-`model`, `endpoint`, `api_key_env`, `context_size`, `max_tokens`, `temperature`, `top_p`
-and `extra_body`. Anything else (including a literal `api_key`) is rejected so typos and
-accidentally stored secrets are caught immediately.
+| Setting | `[defaults]` | Profile | Built-in default | Meaning |
+| --- | --- | --- | --- | --- |
+| `profile` | yes | no | none | Profile used when `--profile` is not given |
+| `theme` | yes | no | `ocean` | `ocean`, `forest`, `sunset` or `mono` |
+| `context_file` | yes | no | `AGENTS.md` | Project instruction file; a legacy `CONTEXT.md` is read when no `AGENTS.md` exists |
+| `provider` | no | required | `ollama` | `ollama` or `openai_compat` |
+| `endpoint` | no | required | `http://localhost:11434` | Server base URL (`http://` or `https://`). For `openai_compat` a bare host such as `http://localhost:1234` gets `/v1` appended; a URL with a path is used as given |
+| `model` | no | required | `qwen2.5-coder` | Model name or id |
+| `api_key` | no | optional | none | Only for a remote URL; never needed for a local server |
+| `context_size` | yes | yes | 8192 | Context window in tokens |
+| `max_tokens` | yes | yes | 4096 | Maximum generated tokens |
+| `temperature` | yes | yes | server default | Sampling temperature |
+| `top_p` | yes | yes | server default | Nucleus sampling |
+| `extra_body` | yes | yes | none | Table merged into OpenAI-compatible requests, e.g. `{ chat_template_kwargs = { enable_thinking = true } }`. A profile's value replaces the default one; they are not merged |
+
+Server, model and key settings are profile-only, so a key can never be sent to another
+profile's endpoint. A setting in the wrong table, an unknown setting or a wrong type is
+an error that names the file and the setting.
+
+### Precedence
+
+From highest to lowest: command-line flags (`--model`, `--theme`), the active profile,
+`[defaults]`, built-in defaults. `/status` shows which file and profile are in effect.
 
 ### Choosing a profile
 
-In order of priority: `--profile NAME`, then `LLMCLI_PROFILE`, then `default` in
-`profiles.toml`. If none applies, no profile is active and the plain `LLMCLI_*` settings
-work exactly as before.
+1. `--profile NAME` on the command line, or `/profile NAME` in a session.
+2. Otherwise `profile` in `[defaults]`.
+3. Otherwise, if the file defines exactly one profile, that one.
+4. If it defines several and none is chosen, llmcli stops and asks you to pick one.
+5. If it defines none, the built-in local Ollama is used.
 
 Inside the CLI:
 
 - `/profiles` lists every profile. `●` marks the active one; the last column shows
-  whether the profile's key variable is set.
-- `/profile gemini` switches providers mid-session. It first checks that the new
-  endpoint responds (Ollama also confirms the model is installed); if anything fails (unknown profile,
-  missing key, endpoint down) you see the error and your current setup is left
-  untouched.
+  whether the profile has an API key (`set` or `none`). The key itself is never shown.
+- `/profile NAME` switches servers mid-session. It first checks that the new endpoint
+  responds (Ollama also confirms the model is installed); if anything fails your
+  current setup is left untouched.
 - By default a switch starts a fresh conversation, because tool-call messages differ
-  between providers. `/profile gemini --keep` carries over the plain user/assistant text
+  between providers. `/profile NAME --keep` carries over the plain user/assistant text
   and drops tool calls and tool results. Memory and project context always stay.
-- `/model <name>` only changes the model within the current profile.
+- `/model <name>` and `/theme <name>` change the running session only; the file is
+  not changed.
 
-### How API keys work
+### API keys
 
-A profile's key comes only from the variable named in `api_key_env` (looked up in the
-environment, then `./.env`, then `~/.llmcli/.env`). A profile never falls back to
-`LLMCLI_API_KEY`, so one service's key cannot be sent to another service's endpoint. A
-profile without `api_key_env` sends no key (right for local Ollama).
+Local servers need no key. For a remote OpenAI-compatible URL, put `api_key` in that
+profile. Keep the file private (`chmod 600 ~/.llmcli/config.toml`); llmcli prints a
+warning at start-up when the file contains a key and other users can read it.
 
-### Precedence
+### Upgrading from 0.2
 
-From highest to lowest: CLI flags such as `--model`, the active profile, real environment
-variables, `./.env`, `~/.llmcli/.env`, built-in defaults. Settings a profile does not
-mention fall through to the lower layers. Note that an active profile therefore beats a
-conflicting `LLMCLI_MODEL` in your environment; `/status` always shows which profile is in
-effect.
+Version 0.3 ignores `~/.llmcli/profiles.toml`, `~/.llmcli/.env`, any project `.env`,
+and all `LLMCLI_*` environment variables. If it finds the old files or variables it
+prints one line saying they are ignored; nothing is converted automatically. Move your
+settings into `~/.llmcli/config.toml`: `api_key_env = "X"` becomes `api_key = "<value>"`
+in the profile, and `default = "name"` becomes `profile = "name"` inside `[defaults]`.
 
 ### Troubleshooting
 
 | Message | Meaning and fix |
 | --- | --- |
-| `Unknown profile 'x'. Available: ...` | Name is not in `profiles.toml`; check `/profiles`. |
-| `... reads its API key from NVIDIA_API_KEY, which is not set` | Export the variable or add it to `~/.llmcli/.env`. |
-| `... unknown setting(s): modle` | Typo in a profile key; the message lists the allowed names. |
-| `unknown top-level key(s)` | A setting sits outside any `[profiles.<name>]` section. |
-| `default profile 'x' is not defined` | Fix or remove the `default = ...` line. |
-
-## Configuration
-
-Without profiles, configuration is set with environment variables or `.env` files
-(`./.env` overrides `~/.llmcli/.env`; real environment variables override both). Run
-`llmcli` from any folder; keep API keys in `~/.llmcli/.env` rather than a project `.env`.
-
-| Variable | Purpose |
-| --- | --- |
-| `LLMCLI_PROFILE` | Name of the profile to activate (see [Profiles](#profiles)). |
-| `LLMCLI_PROVIDER` | `ollama` or `openai_compat`. |
-| `LLMCLI_MODEL` | Default model name. |
-| `LLMCLI_ENDPOINT` | Provider API base URL, as the service documents it. For `openai_compat` a bare host such as `http://localhost:1234` gets `/v1` appended; URLs with a path (`.../v1`, `.../v1beta/openai/`) are used as given. |
-| `LLMCLI_API_KEY` | Optional API key for compatible endpoints (not used by profiles). |
-| `LLMCLI_CONTEXT_SIZE` | Context window size. |
-| `LLMCLI_MAX_TOKENS` | Maximum generated tokens. |
-| `LLMCLI_TEMPERATURE` | Optional sampling temperature. |
-| `LLMCLI_TOP_P` | Optional nucleus-sampling value. |
-| `LLMCLI_EXTRA_BODY` | Optional JSON object merged into OpenAI-compatible requests, e.g. `{"chat_template_kwargs":{"enable_thinking":true}}`. |
-| `LLMCLI_CONTEXT_FILE` | Project context filename; defaults to `AGENTS.md`; a legacy `CONTEXT.md` is still read when no `AGENTS.md` is found. |
-| `LLMCLI_THEME` | Default color preset. |
+| `Unknown profile 'x'. Available: ...` | The name is not in the file; check `/profiles`. |
+| `Several profiles are defined ...` | Pass `--profile NAME` or set `profile` in `[defaults]`. |
+| `... unknown setting 'modle'` | Typo; the message lists the allowed names. |
+| `... is not allowed here; put it in ...` | The setting belongs in the other table (see the table above). |
+| `... missing required setting(s): endpoint` | Every profile needs `provider`, `endpoint` and `model`. |
+| `'default' at the top level is not used` | Write `profile = "name"` inside `[defaults]`. |
+| `not valid TOML: ... (at line N, column M)` | Syntax error at that position. |
 
 ### `@file` attachments
 

@@ -21,21 +21,17 @@ else
     echo "Then run: python -m llmcli"
 fi
 
-# Create default config directory if it doesn't exist
+# Create the config directory and the single configuration file if missing
 mkdir -p ~/.llmcli
-if [ ! -f ~/.llmcli/.env ]; then
-    cp .env.example ~/.llmcli/.env
-    echo "Created default ~/.llmcli/.env"
+if [ ! -f ~/.llmcli/config.toml ]; then
+    cp config.toml.example ~/.llmcli/config.toml
+    chmod 600 ~/.llmcli/config.toml
+    echo "Created ~/.llmcli/config.toml (uses a local Ollama by default)"
 fi
 
 if [ ! -f ~/.llmcli/AGENTS.md ]; then
     cp AGENTS.md.example ~/.llmcli/AGENTS.md
     echo "Created default ~/.llmcli/AGENTS.md"
-fi
-
-if [ ! -f ~/.llmcli/profiles.toml ]; then
-    cp profiles.toml.example ~/.llmcli/profiles.toml
-    echo "Created default ~/.llmcli/profiles.toml (no default profile is active until you set one)"
 fi
 
 echo "Setup complete!"

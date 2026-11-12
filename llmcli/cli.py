@@ -13,12 +13,12 @@ from prompt_toolkit.styles import DynamicStyle, Style
 
 from llmcli.agent import CodingAgent
 from llmcli.coding_tools import ProjectCodingTools
-from llmcli.config import load_config, lookup_env
+from llmcli.config import load_config
+from llmcli.config_file import load_config_file, startup_messages, summarize_profiles
 from llmcli.context import load_context
 from llmcli.file_resolver import resolve_attachments
 from llmcli.history import Conversation
 from llmcli.memory import MemoryStore
-from llmcli.profiles import load_profiles, summarize_profiles
 from llmcli.providers import create_provider
 from llmcli.providers.base import BaseProvider
 from llmcli.ui import THEME_PRESETS, StreamingUI
@@ -76,6 +76,7 @@ def handle_command(
             conversation.clear()
             ui.print_success("Conversation history cleared.")
     elif command in ["/config", "/status"]:
+        ui.console.print(f"[dim]Config:[/dim] [bold]{getattr(config, 'source', 'built-in defaults')}[/bold]")
         ui.console.print(f"[dim]Profile:[/dim] [bold]{getattr(config, 'profile', None) or '(none)'}[/bold]")
         ui.console.print(f"[dim]Provider:[/dim] [bold]{config.provider}[/bold]")
         ui.console.print(f"[dim]Model:[/dim] [bold]{config.model}[/bold]")
@@ -98,11 +99,11 @@ def handle_command(
             ui.print_success(f"Model switched to: [bold]{args}[/bold]")
     elif command == "/profiles":
         try:
-            _default, profiles = load_profiles()
+            config_file = load_config_file()
         except ValueError as error:
             ui.print_error(str(error))
         else:
-            ui.print_profiles(summarize_profiles(profiles, lookup_env), getattr(config, "profile", None))
+            ui.print_profiles(summarize_profiles(config_file), getattr(config, "profile", None))
     elif command == "/profile":
         names = args.split()
         keep = "--keep" in names
@@ -392,28 +393,32 @@ def main():
     parser.add_argument(
         "--theme",
         choices=tuple(THEME_PRESETS),
-        help="CLI color preset (overrides LLMCLI_THEME)",
+        help="CLI color preset (overrides theme in ~/.llmcli/config.toml)",
     )
     parser.add_argument(
         "--profile",
         type=str,
-        help="Named profile from ~/.llmcli/profiles.toml (overrides LLMCLI_PROFILE and the file's default)",
+        help="Named profile from ~/.llmcli/config.toml (overrides profile in [defaults])",
     )
     parser.add_argument(
         "--list-profiles",
         action="store_true",
-        help="List configured profiles and exit",
+        help="List the profiles in ~/.llmcli/config.toml and exit",
     )
     args = parser.parse_args()
 
+    try:
+        config_file = load_config_file()
+    except ValueError as error:
+        print(f"Configuration error: {error}", file=sys.stderr)
+        sys.exit(2)
+    for message in startup_messages(config_file):
+        print(message, file=sys.stderr)
+
     if args.list_profiles:
         list_ui = StreamingUI()
-        try:
-            default, profiles = load_profiles()
-        except ValueError as error:
-            list_ui.print_error(str(error))
-            sys.exit(2)
-        list_ui.print_profiles(summarize_profiles(profiles, lookup_env), default)
+        default = config_file.defaults.get("profile")
+        list_ui.print_profiles(summarize_profiles(config_file), default)
         return
 
     cli_overrides = {}
@@ -423,7 +428,7 @@ def main():
         cli_overrides["theme"] = args.theme
 
     try:
-        config = load_config(cli_overrides, profile=args.profile)
+        config = load_config(cli_overrides, profile=args.profile, file=config_file)
     except ValueError as error:
         print(f"Configuration error: {error}", file=sys.stderr)
         sys.exit(2)

@@ -1,4 +1,4 @@
-"""OpenAI-compatible API provider (LM Studio, vLLM, OpenRouter, Groq, etc.)."""
+"""OpenAI-compatible API provider (llama.cpp llama-server, vLLM, LM Studio, or a remote URL)."""
 
 import json
 from collections.abc import Iterator
@@ -14,8 +14,8 @@ from llmcli.providers.base import BaseProvider, ModelResponse, parse_tool_calls
 class OpenAICompatProvider(BaseProvider):
     def __init__(self, config: Config):
         self.endpoint = config.endpoint.rstrip("/")
-        # Use the base URL exactly as the service documents it (.../v1,
-        # .../v1beta/openai, .../api/v1). Only a bare host such as LM Studio's
+        # Use the base URL exactly as the server documents it (.../v1 or any
+        # other path). Only a bare host such as LM Studio's
         # http://localhost:1234 gets the conventional /v1 appended.
         self.base_url = self.endpoint if urlparse(self.endpoint).path.strip("/") else f"{self.endpoint}/v1"
         self.model = config.model

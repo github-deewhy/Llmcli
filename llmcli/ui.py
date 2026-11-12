@@ -127,9 +127,12 @@ class StreamingUI:
         self.console.print(f"[{self.colors['error']}]✗ {message}[/{self.colors['error']}]")
 
     def print_profiles(self, rows: list[dict], active: str | None) -> None:
-        """Show configured profiles; each row has name/provider/model/endpoint/key_env/key_set."""
+        """Show configured profiles; each row has name/provider/model/endpoint/key_set."""
         if not rows:
-            self.print_info("No profiles defined. See profiles.toml.example in the project folder.")
+            self.print_info(
+                "No profiles defined in ~/.llmcli/config.toml; using the built-in local Ollama. "
+                "See config.toml.example in the project folder."
+            )
             return
         table = Table(
             show_header=True,
@@ -141,12 +144,7 @@ class StreamingUI:
         for column in ("Provider", "Model", "Endpoint", "API key"):
             table.add_column(column, overflow="fold")
         for row in rows:
-            if not row["key_env"]:
-                key = "[dim]none needed[/dim]"
-            elif row["key_set"]:
-                key = f"[green]{escape(row['key_env'])} ✓[/green]"
-            else:
-                key = f"[red]{escape(row['key_env'])} missing[/red]"
+            key = "[green]set[/green]" if row["key_set"] else "[dim]none[/dim]"
             marker = "● " if row["name"] == active else ""
             table.add_row(
                 f"{marker}[bold]{escape(row['name'])}[/bold]",
