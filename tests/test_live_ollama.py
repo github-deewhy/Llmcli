@@ -28,10 +28,13 @@ SYSTEM = "You are a coding assistant. Use the tools to inspect and change files.
 
 
 @pytest.fixture
-def live(live_profile, monkeypatch):
+def live(live_profile):
     # The fixture project lives in a temp dir, but HOME must stay real so the
     # user's ~/.llmcli/config.toml is read.
-    config = load_config({}, profile=live_profile)
+    try:
+        config = load_config({}, profile=live_profile)
+    except ValueError as error:
+        pytest.fail(f"{error} Add a [profiles.{live_profile}] table to ~/.llmcli/config.toml.", pytrace=False)
     provider = create_provider(config)
     healthy, message = provider.check_health()
     if not healthy:
