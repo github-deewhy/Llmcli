@@ -21,7 +21,8 @@ Format: newest first. Update this file and the docs (README.md, user-guide.md,
   refuses to grow a file past the cap.
 
 ### Added
-- GitHub Actions CI (Python 3.10 to 3.13 on Linux, 3.12 on macOS and Windows), ruff, mypy.
+- GitHub Actions CI (Python 3.10 to 3.13 on Linux, 3.12 on macOS), ruff, mypy. Windows is
+  not supported yet and is not tested in CI.
 - `LICENSE` placeholder (all rights reserved until a licence is chosen), `SECURITY.md`.
 - 22 regression tests (107 total).
 

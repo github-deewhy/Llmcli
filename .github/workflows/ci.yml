@@ -1,4 +1,5 @@
 name: CI
+# Supported platforms: Linux and macOS. Windows is deferred (decision D-017).
 
 on:
   push:
@@ -14,8 +15,6 @@ jobs:
         os: [ubuntu-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
         include:
-          - os: windows-latest
-            python-version: "3.12"
           - os: macos-latest
             python-version: "3.12"
     steps:

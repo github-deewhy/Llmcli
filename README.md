@@ -82,3 +82,7 @@ In the interactive console, press Enter to send and Esc+Enter to add a line.
 Use `/help` to see commands, `/clear` to reset the conversation, `/model <name>`
 to switch models, `/theme` to choose a color preset, `/memory` to manage local
 memory, and `/quit` to exit. See [user-guide.md](./user-guide.md) for all options.
+
+## Supported platforms
+
+Linux and macOS (Python 3.10 or newer). Windows is not supported yet.
