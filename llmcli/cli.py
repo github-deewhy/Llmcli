@@ -11,6 +11,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import DynamicStyle, Style
 
 from llmcli.agent import CodingAgent
+from llmcli.budget import messages_chars, over_budget_warning, trim_notice
 from llmcli.coding_tools import ProjectCodingTools
 from llmcli.config import load_config
 from llmcli.config_file import load_config_file, startup_messages, summarize_profiles
@@ -321,6 +322,8 @@ def switch_profile_session(
     agent.apply_settings(new_config.edit_matching, new_config.edit_tools, new_config.stop_guard)
     old_provider.close()
     conversation.max_tokens = new_config.context_size
+    conversation.reply_tokens = new_config.max_tokens
+    conversation.estimator.reset()
     if keep:
         dropped = conversation.keep_text_only()
         note = f"kept the conversation text (dropped {dropped} tool/empty messages)"
@@ -416,7 +419,17 @@ def run_oneshot(config, provider, conversation: Conversation, ui: StreamingUI, p
     try:
         resolved_input = resolve_attachments(prompt)
         conversation.add("user", resolved_input)
-        result = ui.render_events(provider.stream(conversation.get_messages_for_api()))
+        trim = conversation.fit_for_chat()
+        notice = trim_notice(trim, conversation.max_tokens)
+        if notice:
+            ui.print_info(notice)
+        warning = over_budget_warning(trim, conversation.max_tokens)
+        if warning:
+            ui.print_error(warning)
+        messages = conversation.get_messages_for_api()
+        result = ui.render_events(provider.stream(messages))
+        if result.usage is not None:
+            conversation.estimator.calibrate(messages_chars(messages), result.usage.prompt_tokens)
         if result.interrupted:
             return 130
         conversation.add("assistant", result.text)
@@ -513,6 +526,7 @@ def main():
         conversation = Conversation(
             system_prompt=memory_store.compose_system_prompt(loaded_memory),
             max_tokens=config.context_size,
+            reply_tokens=config.max_tokens,
         )
     except (OSError, UnicodeError) as error:
         ui.print_error(f"Could not load local memory: {error}")

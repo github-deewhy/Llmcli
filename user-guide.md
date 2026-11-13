@@ -157,8 +157,8 @@ use letters, digits, `.`, `_` and `-`.
 | `endpoint` | no | required | `http://localhost:11434` | Server base URL (`http://` or `https://`). For `openai_compat` a bare host such as `http://localhost:1234` gets `/v1` appended; a URL with a path is used as given |
 | `model` | no | required | `qwen2.5-coder` | Model name or id |
 | `api_key` | no | optional | none | Only for a remote URL; never needed for a local server |
-| `context_size` | yes | yes | 8192 | Context window in tokens |
-| `max_tokens` | yes | yes | 4096 | Maximum generated tokens |
+| `context_size` | yes | yes | 8192 | Context window in tokens. When the conversation no longer fits, the oldest turns are dropped and llmcli says so |
+| `max_tokens` | yes | yes | 4096 | Maximum generated tokens. This much of `context_size` (at most a quarter) is kept free for the reply |
 | `temperature` | yes | yes | server default | Sampling temperature |
 | `top_p` | yes | yes | server default | Nucleus sampling |
 | `extra_body` | yes | yes | none | Table merged into every request, e.g. `{ think = false }` for Ollama or `{ chat_template_kwargs = { enable_thinking = false } }` for llama.cpp or vLLM. A profile's value replaces the default one; they are not merged |

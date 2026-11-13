@@ -179,6 +179,7 @@ def _run_profile(
                     provider,
                     name,
                     context_size=config.context_size,
+                    reply_tokens=config.max_tokens,
                     tool_mode=config.tool_mode,
                     repeat=repeat,
                     deadline_s=args.deadline,

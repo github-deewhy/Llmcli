@@ -108,6 +108,7 @@ def test_conversation_trimming_keeps_tool_messages_with_their_turn():
     conversation.add_message({"role": "tool", "tool_call_id": "call-1", "content": "contents"})
     conversation.add("assistant", "old answer")
     conversation.add("user", "new question")
+    conversation.fit(0)  # trimming happens right before a request (spec 16, C1)
 
     assert [message["role"] for message in conversation.messages] == ["user"]
     assert conversation.messages[0]["content"] == "new question"
