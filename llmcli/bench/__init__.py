@@ -9,4 +9,4 @@ from pathlib import Path
 # Tasks live in the repository, not in the installed package (spec 15, 2.1).
 DEFAULT_TASKS_DIR = Path(__file__).resolve().parents[2] / "bench" / "tasks"
 DEFAULT_RESULTS_DIR = Path("bench-results")
-CONFIGURATION = "baseline-v0.4"
+CONFIGURATION = "baseline-v0.6"

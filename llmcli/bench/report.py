@@ -12,7 +12,8 @@ from typing import Any
 
 from llmcli.bench.runner import RunRecord
 
-SCHEMA_VERSION = 1
+# 2 (llmcli 0.6.0): adds tool_errors, per-run errors, per-cell common errors and the rpm setting.
+SCHEMA_VERSION = 2
 
 
 def _sum(values: list[int | None]) -> int | None:
@@ -44,6 +45,7 @@ def run_metrics(record: RunRecord) -> dict[str, Any]:
         "loop_guard_triggered": outcome.stop_reason == "round_limit",
         "tool_calls": outcome.tool_calls,
         "invalid_calls": outcome.invalid_calls,
+        "tool_errors": outcome.tool_errors,
         "tool_call_validity": (
             round((outcome.tool_calls - min(outcome.invalid_calls, outcome.tool_calls)) / outcome.tool_calls, 3)
             if outcome.tool_calls
@@ -70,6 +72,23 @@ def run_metrics(record: RunRecord) -> dict[str, Any]:
     }
 
 
+def run_errors(record: RunRecord) -> dict[str, Any]:
+    """Error messages of one run: the provider error, if the run ended with one, and each tool error."""
+    outcome = record.outcome
+    return {
+        "provider_error": outcome.error if outcome.stop_reason == "provider_error" else None,
+        "tool_errors": list(outcome.tool_error_messages),
+    }
+
+
+def _most_common(messages: list[str]) -> dict[str, Any] | None:
+    """The most frequent message and how often it occurred; ties go to the first seen."""
+    if not messages:
+        return None
+    message, count = Counter(messages).most_common(1)[0]
+    return {"message": message, "count": count}
+
+
 def _spread(values: list[Any]) -> dict[str, float | None]:
     known = [v for v in values if v is not None]
     if not known:
@@ -85,6 +104,7 @@ def aggregate(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result = []
     for (profile, task_id), items in cells.items():
         metrics = [item["metrics"] for item in items]
+        errors = [item.get("errors", {}) for item in items]
         result.append(
             {
                 "profile": profile,
@@ -97,6 +117,7 @@ def aggregate(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "rounds": _spread([m["rounds"] for m in metrics]),
                 "tool_calls": sum(m["tool_calls"] for m in metrics),
                 "invalid_calls": sum(m["invalid_calls"] for m in metrics),
+                "tool_errors": sum(m["tool_errors"] for m in metrics),
                 "loop_guard_triggers": sum(1 for m in metrics if m["loop_guard_triggered"]),
                 "peak_context_utilisation": max(
                     (m["peak_context_utilisation"] for m in metrics if m["peak_context_utilisation"] is not None),
@@ -104,6 +125,10 @@ def aggregate(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 ),
                 "trims": sum(m["trims"] for m in metrics),
                 "stop_reasons": dict(Counter(m["stop_reason"] for m in metrics)),
+                "common_provider_error": _most_common(
+                    [e["provider_error"] for e in errors if e.get("provider_error")]
+                ),
+                "common_tool_error": _most_common([m for e in errors for m in e.get("tool_errors", [])]),
             }
         )
     return result
@@ -136,6 +161,24 @@ def _fmt_spread(spread: dict[str, Any]) -> str:
     return f"{_fmt(spread['mean'])} ({_fmt(spread['min'])}–{_fmt(spread['max'])})"
 
 
+def _one_line(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _error_lines(cells: list[dict[str, Any]]) -> list[str]:
+    """Per cell, the most common provider error and tool error, one line each (spec 16, A4)."""
+    lines = []
+    for cell in cells:
+        for label, key in (("provider error", "common_provider_error"), ("tool error", "common_tool_error")):
+            common = cell.get(key)
+            if common:
+                lines.append(f"- {cell['task_id']}, most common {label} ({common['count']}×): "
+                             f"{_one_line(common['message'])}")
+    if not lines:
+        return []
+    return ["Most common errors:", "", *lines, ""]
+
+
 def markdown(report: dict[str, Any]) -> str:
     env = report["environment"]
     machine = env["machine"]
@@ -158,6 +201,7 @@ def markdown(report: dict[str, Any]) -> str:
         f"| Repeats | {env['settings']['repeats']} |",
         f"| Deadline per task | {env['settings']['deadline_s']:g} s |",
         f"| max_tokens override | {_fmt(env['settings']['max_tokens'])} |",
+        f"| Requests per minute limit | {_fmt(env['settings'].get('rpm'))} |",
         "",
     ]
     for profile in env["profiles"]:
@@ -171,21 +215,22 @@ def markdown(report: dict[str, Any]) -> str:
             f"Server version {_fmt(profile.get('server_version'))}, model digest {_fmt(profile.get('model_digest'))}.",
             "",
             "| Task | Passed | Wall s mean (min–max) | Prompt tokens mean (min–max) | Gen tok/s mean (min–max) "
-            "| Rounds mean (min–max) | Invalid / tool calls | Loop guard | Peak context | Trims | Stop reasons |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| Rounds mean (min–max) | Invalid / tool calls | Tool errors | Loop guard | Peak context | Trims "
+            "| Stop reasons |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
-        for cell in report["cells"]:
-            if cell["profile"] != profile["name"]:
-                continue
+        cells = [cell for cell in report["cells"] if cell["profile"] == profile["name"]]
+        for cell in cells:
             reasons = ", ".join(f"{k} {v}" for k, v in sorted(cell["stop_reasons"].items()))
             lines.append(
                 f"| {cell['task_id']} | {cell['passed']}/{cell['runs']} | {_fmt_spread(cell['wall_s'])} "
                 f"| {_fmt_spread(cell['prompt_tokens'])} | {_fmt_spread(cell['gen_tokens_per_s'])} "
                 f"| {_fmt_spread(cell['rounds'])} | {cell['invalid_calls']} / {cell['tool_calls']} "
-                f"| {cell['loop_guard_triggers']} | {_fmt(cell['peak_context_utilisation'])} "
+                f"| {cell['tool_errors']} | {cell['loop_guard_triggers']} | {_fmt(cell['peak_context_utilisation'])} "
                 f"| {cell['trims']} | {reasons} |"
             )
         lines.append("")
+        lines += _error_lines(cells)
     lines += [
         "## Tasks",
         "",
@@ -203,7 +248,8 @@ def build_report(
     environment: dict[str, Any], records: list[RunRecord], started_utc: str, configuration: str
 ) -> dict[str, Any]:
     runs = [
-        {"task_id": r.task_id, "profile": r.profile, "repeat": r.repeat, "metrics": run_metrics(r)}
+        {"task_id": r.task_id, "profile": r.profile, "repeat": r.repeat, "metrics": run_metrics(r),
+         "errors": run_errors(r)}
         for r in records
     ]
     return {

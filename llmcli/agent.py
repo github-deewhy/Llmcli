@@ -24,6 +24,8 @@ MAX_TOOL_CALLS_PER_ROUND = 4
 # wrote a tool call as text instead of using the native format.
 TEXT_CALLS_BEFORE_SWITCH = 2
 REPAIRS_PER_TURN = 1
+# Longest tool error message kept in ``RunOutcome.tool_error_messages``.
+MAX_TOOL_ERROR_CHARS = 200
 AGENT_INSTRUCTIONS = (
     "For coding tasks, inspect the relevant project files with tools before making "
     "claims. Use tools for actual file changes and tests; never claim an edit or test "
@@ -40,12 +42,19 @@ class RunOutcome:
     ``no_tools`` (final text without any tool use), ``round_limit``,
     ``provider_error``, ``interrupted`` (Ctrl-C during a reply) or
     ``cancelled`` (Ctrl-C during a tool).
+
+    ``invalid_calls`` counts calls rejected before running (unknown tool or bad
+    arguments). ``tool_errors`` counts calls that ran and returned an error, for
+    example a ``replace_in_file`` whose ``old_text`` was not found (spec 16, A3);
+    ``tool_error_messages`` holds their messages, one per error.
     """
 
     stop_reason: str = "answered"
     rounds: int = 0
     tool_calls: int = 0
     invalid_calls: int = 0
+    tool_errors: int = 0
+    tool_error_messages: list[str] = field(default_factory=list)
     repairs: int = 0
     mode_switched: bool = False
     error: str | None = None
@@ -198,6 +207,7 @@ class CodingAgent:
                     result = json.dumps({"error": f"{call.name}: {problem}"})
                 else:
                     result = self.tools.execute(call.name, call.arguments, self.confirm)
+                    self._note_tool_error(call.name, result)
                 self._record(call, result, via_text)
                 result_recorded = True
                 self._show_tool_result(call.name, result)
@@ -213,6 +223,16 @@ class CodingAgent:
         for call in calls[MAX_TOOL_CALLS_PER_ROUND:]:
             self._record(call, '{"error":"Tool-call limit reached for this response."}', via_text)
         return True
+
+    def _note_tool_error(self, name: str, result: str) -> None:
+        try:
+            data = json.loads(result)
+        except json.JSONDecodeError:
+            return
+        if isinstance(data, dict) and "error" in data:
+            self._outcome.tool_errors += 1
+            message = " ".join(f"{name}: {data['error']}".split())
+            self._outcome.tool_error_messages.append(message[:MAX_TOOL_ERROR_CHARS])
 
     def _record(self, call: ToolCall, result: str, via_text: bool) -> None:
         if via_text:

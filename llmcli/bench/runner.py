@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path
@@ -32,6 +32,54 @@ DEFAULT_DEADLINE_S = 600.0
 DEFAULT_MAX_TOKENS = 1024
 
 
+class Pacer:
+    """Keeps model requests at least ``60 / rpm`` seconds apart (spec 16, A5).
+
+    One pacer is shared by every run of a profile, because a rate limit counts all
+    requests to the server. ``clock`` and ``sleep`` can be replaced in tests.
+    """
+
+    def __init__(
+        self,
+        rpm: int,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ):
+        if rpm <= 0:
+            raise ValueError("rpm must be a positive integer")
+        self.interval_s = 60.0 / rpm
+        self._clock = clock
+        self._sleep = sleep
+        self._last_start: float | None = None
+
+    def wait(self) -> float:
+        """Wait until the next request may start; return the seconds waited."""
+        now = self._clock()
+        waited = 0.0
+        if self._last_start is not None:
+            waited = max(0.0, self._last_start + self.interval_s - now)
+            if waited > 0:
+                self._sleep(waited)
+        self._last_start = now + waited
+        return waited
+
+
+class PacedProvider:
+    """Wraps a provider; waits for the pacer before each request and adds up the waiting time."""
+
+    def __init__(self, inner: BaseProvider, pacer: Pacer):
+        self._inner = inner
+        self._pacer = pacer
+        self.waited_s = 0.0
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def stream(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None) -> Iterator[Event]:
+        self.waited_s += self._pacer.wait()
+        yield from self._inner.stream(messages, tools)
+
+
 class BenchDeadline(ProviderError):
     """The task ran past its deadline. Raised between stream events, so the agent stops cleanly."""
 
@@ -43,10 +91,17 @@ class DeadlineProvider:
     is still bounded by the profile's ``request_timeout``.
     """
 
-    def __init__(self, inner: BaseProvider, deadline: float, limit_s: float):
+    def __init__(
+        self,
+        inner: BaseProvider,
+        deadline: float,
+        limit_s: float,
+        paused_s: Callable[[], float] = lambda: 0.0,
+    ):
         self._inner = inner
         self._deadline = deadline
         self._limit_s = limit_s
+        self._paused_s = paused_s  # pacing time, which does not count against the deadline
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
@@ -64,7 +119,7 @@ class DeadlineProvider:
                 close()
 
     def _check(self) -> None:
-        if time.monotonic() > self._deadline:
+        if time.monotonic() - self._paused_s() > self._deadline:
             raise BenchDeadline(f"Task deadline of {self._limit_s:g} s reached.")
 
 
@@ -143,9 +198,13 @@ def run_task(
     tool_mode: str = "auto",
     repeat: int = 1,
     deadline_s: float = DEFAULT_DEADLINE_S,
+    pacer: Pacer | None = None,
 ) -> RunRecord:
     """Run ``task`` once with ``provider``. Every edit and test is approved automatically,
-    which is acceptable only because the workspace is a throwaway copy (spec 15, 2.8)."""
+    which is acceptable only because the workspace is a throwaway copy (spec 15, 2.8).
+
+    With a ``pacer``, time spent waiting for it counts neither in ``wall_s`` nor
+    against the deadline."""
     with tempfile.TemporaryDirectory(prefix=f"llmcli-bench-{task.id}-") as tmp:
         tmp_path = Path(tmp)
         work = tmp_path / "work"
@@ -155,13 +214,19 @@ def run_task(
 
         ui = StreamingUI(Console(file=StringIO(), force_terminal=False, width=120))
         conversation = Conversation(SYSTEM_PROMPT, max_tokens=context_size)
+        paced = PacedProvider(provider, pacer) if pacer is not None else None
+        inner = cast(BaseProvider, paced) if paced is not None else provider
+
+        def paused_s() -> float:
+            return paced.waited_s if paced is not None else 0.0
+
         start = time.monotonic()
-        wrapped = cast(BaseProvider, DeadlineProvider(provider, start + deadline_s, deadline_s))
+        wrapped = cast(BaseProvider, DeadlineProvider(inner, start + deadline_s, deadline_s, paused_s))
         agent = CodingAgent(
             wrapped, conversation, ProjectCodingTools(work, ui), ui, lambda _message: True, tool_mode
         )
         outcome = agent.run(task.prompt)
-        wall_s = time.monotonic() - start
+        wall_s = time.monotonic() - start - paused_s()
 
         check = run_checker(task, work, outcome.final_text, home)
         return RunRecord(
