@@ -34,11 +34,11 @@ DEFAULT_MAX_TOKENS = 1024
 
 @dataclass(frozen=True)
 class AgentSettings:
-    """The agent settings a run uses (spec 16, part B); defaults are the 0.6 behaviour."""
+    """The agent settings a run uses (spec 16, part B); same defaults as ``Config`` (D-029)."""
 
     edit_matching: str = "exact"
     edit_tools: str = "replace"
-    stop_guard: bool = False
+    stop_guard: bool = True
 
 
 class Pacer:

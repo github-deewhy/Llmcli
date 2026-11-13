@@ -34,7 +34,7 @@ BUILT_IN: dict[str, Any] = {
     "tool_mode": "auto",
     "edit_matching": "exact",
     "edit_tools": "replace",
-    "stop_guard": False,
+    "stop_guard": True,
 }
 
 CLI_KEYS = ("model", "theme")
@@ -62,10 +62,11 @@ class Config:
     request_timeout: int = 300
     # Tool-call rung: "auto" (native, falls back to text), "native" or "text" (spec 14, 2.6).
     tool_mode: str = "auto"
-    # Agent settings compared by the benchmark (spec 16, part B); defaults keep 0.6 behaviour.
+    # Agent settings compared by the benchmark (spec 16, part B); defaults chosen from the
+    # 2026-11-13 ablation (D-029): only stop_guard is on.
     edit_matching: str = "exact"
     edit_tools: str = "replace"
-    stop_guard: bool = False
+    stop_guard: bool = True
 
 
 def select_profile(file: ConfigFile, requested: str | None) -> str | None:

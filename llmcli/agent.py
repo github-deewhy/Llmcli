@@ -81,7 +81,7 @@ class CodingAgent:
         ui: StreamingUI,
         confirm: Callable[[str], bool],
         tool_mode: str = "auto",
-        stop_guard: bool = False,
+        stop_guard: bool = True,
     ):
         self.provider = provider
         self.conversation = conversation
