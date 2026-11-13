@@ -169,7 +169,9 @@ class CodingAgent:
                         outcome.repairs += 1
                         self.ui.print_info(f"Tool call rejected: {found.error}")
                         self.conversation.add(
-                            "user", f"Tool call error: {found.error} Reply with a corrected tool call."
+                            "user",
+                            f"Tool call error: {found.error} Reply with a corrected tool call.",
+                            continues_turn=True,
                         )
                         continue
 
@@ -263,7 +265,7 @@ class CodingAgent:
 
     def _record(self, call: ToolCall, result: str, via_text: bool) -> None:
         if via_text:
-            self.conversation.add("user", tool_result_text(call.name, result))
+            self.conversation.add("user", tool_result_text(call.name, result), continues_turn=True)
         else:
             self.conversation.add_message(self.provider.tool_result_message(call, result))
 

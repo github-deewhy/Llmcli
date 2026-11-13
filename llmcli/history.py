@@ -21,15 +21,26 @@ class Conversation:
         self.reply_tokens = reply_tokens
         self.messages: list[dict[str, Any]] = []
         self.estimator = TokenEstimator()
+        # ids of user messages that continue a turn instead of starting one: text-mode
+        # tool results and repair notes. Trimming never cuts a turn at them.
+        self._continuations: set[int] = set()
         # How many turns were dropped to fit the budget (spec 15, 2.6).
         self.trim_count = 0
 
-    def add(self, role: str, content: str) -> None:
-        self.add_message({"role": role, "content": content})
+    def add(self, role: str, content: str, continues_turn: bool = False) -> None:
+        """Add a message. ``continues_turn=True`` marks a user message that is part of
+        the current turn (a text-mode tool result or a repair note), not a new question."""
+        self.add_message({"role": role, "content": content}, continues_turn)
 
-    def add_message(self, message: dict[str, Any]) -> None:
+    def add_message(self, message: dict[str, Any], continues_turn: bool = False) -> None:
         """Append a provider message, including structured tool calls/results."""
+        self._continuations.discard(id(message))
+        if continues_turn:
+            self._continuations.add(id(message))
         self.messages.append(message)
+
+    def _starts_turn(self, message: dict[str, Any]) -> bool:
+        return message.get("role") == "user" and id(message) not in self._continuations
 
     def prompt_budget(self) -> int:
         """Tokens available for the whole prompt: the window minus the reply reserve."""
@@ -39,8 +50,9 @@ class Conversation:
         """Drop the oldest whole turns until the estimated prompt fits the budget.
 
         ``fixed_chars`` is everything sent besides ``messages``: the system message
-        as sent and the tool schemas. A turn starts at a user message; the latest
-        one is never dropped, so tool calls stay together with their results.
+        as sent and the tool schemas. A turn starts at a user message not marked
+        ``continues_turn``; the latest turn is never dropped, so tool calls stay with
+        their results and a task prompt is never dropped in the middle of its turn.
         """
         budget = self.prompt_budget()
         fixed = self.estimator.tokens(fixed_chars)
@@ -50,7 +62,7 @@ class Conversation:
         while total > budget:
             next_turn = next(
                 (index for index, message in enumerate(self.messages[1:], start=1)
-                 if message.get("role") == "user"),
+                 if self._starts_turn(message)),
                 None,
             )
             if next_turn is None:
@@ -90,14 +102,20 @@ class Conversation:
         """
         before = len(self.messages)
         kept = []
+        continuations: set[int] = set()
         for message in self.messages:
             role = message.get("role")
             content = message.get("content") or ""
             if role == "user" or (role == "assistant" and content.strip()):
-                kept.append({"role": role, "content": content})
+                copy = {"role": role, "content": content}
+                if id(message) in self._continuations:
+                    continuations.add(id(copy))
+                kept.append(copy)
         self.messages = kept
+        self._continuations = continuations
         return before - len(kept)
 
     def clear(self) -> None:
         """Clear conversation history."""
         self.messages = []
+        self._continuations = set()
