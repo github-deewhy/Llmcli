@@ -3,6 +3,13 @@
 Format: newest first. Update this file and the docs (README.md, user-guide.md,
 config.toml.example) in the same change as the code.
 
+## 0.8.1
+
+### Fixed
+- In text tool mode, tool results and repair notes are stored as user messages, and
+  trimming treated them as the start of a new turn, so it could drop the task prompt
+  in the middle of a long task. They are now marked as part of the current turn.
+
 ## 0.8.0
 
 ### Changed

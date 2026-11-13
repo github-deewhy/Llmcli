@@ -348,3 +348,67 @@ def test_profile_switch_resets_calibration_and_reserve(monkeypatch):
     assert conversation.max_tokens == 4096
     assert conversation.reply_tokens == 512
     assert not conversation.estimator.calibrated
+
+
+# --- 0.8.1: text-mode tool results do not start a turn -------------------------------
+
+TEXT_CALL = '```json\n{"name": "read_file", "arguments": {"path": "app.py"}}\n```'
+
+
+def text_mode_turn(conversation: Conversation, prompt: str, results: int, size: int) -> None:
+    """The message sequence the agent stores for one text-mode task."""
+    conversation.add("user", prompt)
+    for index in range(results):
+        conversation.add("assistant", TEXT_CALL)
+        conversation.add("user", f"Tool result for read_file: {index} " + "r" * size, continues_turn=True)
+
+
+def test_trimming_never_drops_the_task_prompt_inside_a_text_mode_turn():
+    conversation = Conversation("", max_tokens=300)
+    conversation.add("user", "old " + "x" * 800)
+    conversation.add("assistant", "old answer")
+    text_mode_turn(conversation, "TASK: add a function", results=3, size=400)
+    result = conversation.fit(0)
+    assert result.turns_dropped == 1
+    assert conversation.messages[0]["content"] == "TASK: add a function"
+    assert result.over_budget  # the current turn alone is too big: warned, not cut
+
+
+def test_repair_notes_continue_the_turn():
+    conversation = Conversation("", max_tokens=50)
+    conversation.add("user", "TASK")
+    conversation.add("assistant", "bad call")
+    conversation.add("user", "Tool call error: ... " + "e" * 400, continues_turn=True)
+    conversation.fit(0)
+    assert conversation.messages[0]["content"] == "TASK"
+
+
+def test_keep_text_only_keeps_continuation_marks():
+    conversation = Conversation("", max_tokens=400)
+    text_mode_turn(conversation, "TASK", results=2, size=10)
+    conversation.keep_text_only()
+    starts = [m["content"] for m in conversation.messages if conversation._starts_turn(m)]
+    assert starts == ["TASK"]
+
+
+def test_clear_forgets_continuation_marks():
+    conversation = Conversation("", max_tokens=400)
+    text_mode_turn(conversation, "TASK", results=1, size=10)
+    conversation.clear()
+    assert conversation._continuations == set()
+
+
+def test_agent_marks_text_mode_tool_results_and_repairs(tmp_path):
+    bad = '```json\n{"name": "no_such_tool", "arguments": {}}\n```'
+    turns = [answer(TEXT_CALL), answer(bad), answer("done")]
+    conversation = Conversation("ctx", max_tokens=8192)
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "app.py").write_text("print('hello')\n", encoding="utf-8")
+    ui, _ = make_ui()
+    provider = ScriptedProvider(turns)
+    agent = CodingAgent(provider, conversation, ProjectCodingTools(root, ui), ui, lambda _m: True, "text")
+    agent.run("TASK")
+    users = [m for m in conversation.messages if m["role"] == "user"]
+    assert len(users) == 3  # task, tool result, repair note
+    assert [conversation._starts_turn(m) for m in users] == [True, False, False]
