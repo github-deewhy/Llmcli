@@ -319,8 +319,8 @@ def test_fake_run_writes_report_transcripts_and_aggregates(tmp_path):
     code = main(["--tasks-dir", str(tmp_path / "tasks"), "run", "--fake", "--repeats", "3", "--out", str(out)])
     assert code == 0
     report = json.loads((out / "report.json").read_text())
-    assert report["schema_version"] == 1
-    assert report["configuration"] == "baseline-v0.4"
+    assert report["schema_version"] == 2
+    assert report["configuration"] == "baseline-v0.6"
     assert {"machine", "profiles", "settings", "tasks"} <= set(report["environment"])
     assert len(report["runs"]) == 3
     [cell] = report["cells"]

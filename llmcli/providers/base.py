@@ -35,6 +35,10 @@ PROBE_TOOL: dict[str, Any] = {
     },
 }
 PROBE_PROMPT = "Call the ping tool with value 1. Do not answer in text."
+# Client-side speed is reported only above these, so a reply that arrives in one
+# burst does not show an absurd tokens/s (spec 16, A2).
+MIN_SPEED_TOKENS = 8
+MIN_SPEED_SECONDS = 0.5
 
 
 class StreamState:
@@ -100,11 +104,17 @@ class StreamState:
         return round(self.first_token_at - self.started, 3)
 
     def wall_tokens_per_s(self, completion_tokens: int | None) -> float | None:
-        """Generation speed from client timing, when the server gives no duration."""
-        if not completion_tokens or self.first_token_at is None:
+        """Generation speed from client timing, when the server gives no duration.
+
+        ``None`` unless at least ``MIN_SPEED_TOKENS`` arrived over at least
+        ``MIN_SPEED_SECONDS``; below that the number measures buffering, not generation.
+        """
+        if completion_tokens is None or completion_tokens < MIN_SPEED_TOKENS or self.first_token_at is None:
             return None
         elapsed = time.monotonic() - self.first_token_at
-        return round(completion_tokens / elapsed, 2) if elapsed > 0 else None
+        if elapsed < MIN_SPEED_SECONDS:
+            return None
+        return round(completion_tokens / elapsed, 2)
 
 
 class BaseProvider(ABC):

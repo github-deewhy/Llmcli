@@ -3,6 +3,27 @@
 Format: newest first. Update this file and the docs (README.md, user-guide.md,
 config.toml.example) in the same change as the code.
 
+## 0.6.0
+
+M3 part A: measurement fixes (spec 16). Agent behaviour is unchanged.
+
+### Added
+- Benchmark: `--rpm N` paces model requests for servers with a rate limit; waiting
+  time is excluded from wall time and from the task deadline.
+- Benchmark: a tool-errors count per run and per task (tool calls that ran and
+  failed, separate from invalid calls), and the most common provider error and tool
+  error per task in `report.md`. `report.json` schema version 2.
+
+### Changed
+- OpenAI-compatible servers are asked for token counts
+  (`stream_options.include_usage`). If a server answers HTTP 400, the request is
+  sent once more without it, and it is not sent again to that server for the
+  session. A `stream_options` value in `extra_body` is used as given.
+- Tokens/s measured by llmcli (OpenAI-compatible servers) is shown only when at
+  least 8 tokens arrived over at least 0.5 s; otherwise it is unknown. Before, a
+  reply that arrived in one burst showed absurd speeds.
+- Benchmark reports are labelled `baseline-v0.6`.
+
 ## 0.5.1
 
 Fixes from the first benchmark run on a real model (Ollama, `qwen3:4b`).

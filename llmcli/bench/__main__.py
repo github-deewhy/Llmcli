@@ -11,7 +11,7 @@ from typing import Any
 from llmcli.bench import CONFIGURATION, DEFAULT_RESULTS_DIR, DEFAULT_TASKS_DIR
 from llmcli.bench.environment import machine_info, ollama_server_info, profile_info
 from llmcli.bench.report import build_report, write_report
-from llmcli.bench.runner import DEFAULT_DEADLINE_S, DEFAULT_MAX_TOKENS, RunRecord, run_task
+from llmcli.bench.runner import DEFAULT_DEADLINE_S, DEFAULT_MAX_TOKENS, Pacer, RunRecord, run_task
 from llmcli.bench.tasks import Task, TaskError, load_oracle, load_tasks, null_script, task_hash
 from llmcli.providers.fake import ScriptedProvider
 
@@ -55,6 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--repeats", type=_positive_int, default=3)
     run.add_argument("--deadline", type=_positive_float, default=DEFAULT_DEADLINE_S, help="seconds per task")
     run.add_argument("--max-tokens", type=_positive_int, default=DEFAULT_MAX_TOKENS, help="overrides the profile")
+    run.add_argument(
+        "--rpm", type=_positive_int, help="at most N model requests per minute (waiting is not timed)"
+    )
     run.add_argument("--out", type=Path, help="report folder (default: bench-results/<time>-<commit>)")
     run.add_argument(ACK_FLAG, dest="acknowledged", action="store_true", help=argparse.SUPPRESS)
     return parser
@@ -124,6 +127,7 @@ def _run_profile(
     config = load_config({}, profile=name)
     config.max_tokens = args.max_tokens
     provider = create_provider(config)
+    pacer = Pacer(args.rpm) if args.rpm else None
     try:
         healthy, message = provider.check_health()
         if not healthy:
@@ -142,6 +146,7 @@ def _run_profile(
                     tool_mode=config.tool_mode,
                     repeat=repeat,
                     deadline_s=args.deadline,
+                    pacer=pacer,
                 )
                 records.append(record)
                 _progress(record)
@@ -180,6 +185,7 @@ def cmd_run(args: argparse.Namespace, tasks: list[Task]) -> int:
             "repeats": args.repeats,
             "deadline_s": args.deadline,
             "max_tokens": None if args.fake else args.max_tokens,
+            "rpm": None if args.fake else args.rpm,
         },
         "tasks": [{"id": t.id, "category": t.category, "hash": task_hash(t)} for t in tasks],
     }

@@ -8,15 +8,26 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
 from llmcli.config import Config
 from llmcli.providers.base import BaseProvider, StreamState, parse_tool_calls
-from llmcli.providers.events import Capabilities, Done, Event, Usage
+from llmcli.providers.events import Capabilities, Done, Event, ProviderHTTPError, Usage
 from llmcli.providers.http import check_status, protocol_error, translate_errors
 
 MAX_SERVER_ERROR_CHARS = 200
+# Asks the server to send token counts in the last stream chunk (spec 16, A1).
+USAGE_OPTION: dict[str, Any] = {"include_usage": True}
+
+
+@dataclass
+class _StreamEnd:
+    """What the end of a stream tells us besides events."""
+
+    usage: dict[str, Any] = field(default_factory=dict)
+    finish_reason: str | None = None
 
 
 class OpenAICompatProvider(BaseProvider):
@@ -33,6 +44,8 @@ class OpenAICompatProvider(BaseProvider):
         self.temperature = config.temperature
         self.top_p = config.top_p
         self.extra_body = dict(config.extra_body)
+        # Cleared for this provider instance if the server rejects the option with HTTP 400.
+        self.send_usage_option = True
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -111,7 +124,13 @@ class OpenAICompatProvider(BaseProvider):
             payload["tool_choice"] = "auto"
         for key, value in self.extra_body.items():
             payload.setdefault(key, value)
+        if self.send_usage_option:
+            payload.setdefault("stream_options", dict(USAGE_OPTION))
         return payload
+
+    def _usage_option_sent(self, payload: dict[str, Any]) -> bool:
+        """True if this request carries our ``stream_options`` (not one from ``extra_body``)."""
+        return self.send_usage_option and "stream_options" not in self.extra_body and "stream_options" in payload
 
     def stream(
         self,
@@ -120,13 +139,44 @@ class OpenAICompatProvider(BaseProvider):
     ) -> Iterator[Event]:
         state = StreamState(self.capabilities)
         fragments: dict[int, dict[str, Any]] = {}
-        finish_reason: str | None = None
-        usage_body: dict[str, Any] = {}
+        ending = _StreamEnd()
+        payload = self._payload(messages, tools)
+        try:
+            yield from self._read_stream(payload, state, fragments, ending)
+        except ProviderHTTPError as error:
+            # Some servers reject stream_options. Nothing has been yielded yet, because
+            # the status is checked before the body is read, so retrying is safe.
+            if error.status_code != 400 or not self._usage_option_sent(payload):
+                raise
+            self.send_usage_option = False
+            payload.pop("stream_options", None)
+            yield from self._read_stream(payload, state, fragments, ending)
+        yield from state.finish()
+        raw_calls = self._assemble(fragments)
+        if raw_calls:
+            for call in self._parse(raw_calls):
+                yield state.tool_call(call)
+            if len(fragments) and any(f["chunks"] > 1 for f in fragments.values()):
+                self.capabilities.set("streams_tool_calls", "yes", "observed")
+        yield self.record_usage(self._usage(ending.usage, state))
+        assistant: dict[str, Any] = {"role": "assistant", "content": state.text}
+        if raw_calls:
+            assistant["tool_calls"] = raw_calls
+        yield Done(finish_reason=ending.finish_reason, assistant_message=assistant)
+
+    def _read_stream(
+        self,
+        payload: dict[str, Any],
+        state: StreamState,
+        fragments: dict[int, dict[str, Any]],
+        ending: _StreamEnd,
+    ) -> Iterator[Event]:
+        """Send one request and read its stream; usage and finish reason go into ``ending``."""
         with translate_errors(self.endpoint, self.request_timeout):
             with self.client.stream(
                 "POST",
                 f"{self.base_url}/chat/completions",
-                json=self._payload(messages, tools),
+                json=payload,
                 headers=self._headers(),
             ) as resp:
                 check_status(resp, self.endpoint)
@@ -138,7 +188,7 @@ class OpenAICompatProvider(BaseProvider):
                         break
                     chunk = self._decode(data)
                     if isinstance(chunk.get("usage"), dict):
-                        usage_body = chunk["usage"]
+                        ending.usage = chunk["usage"]
                     choices = chunk.get("choices") or []
                     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
                         continue
@@ -154,19 +204,7 @@ class OpenAICompatProvider(BaseProvider):
                     if delta.get("tool_calls"):
                         self._merge_fragments(fragments, delta["tool_calls"])
                     if choice.get("finish_reason"):
-                        finish_reason = choice["finish_reason"]
-        yield from state.finish()
-        raw_calls = self._assemble(fragments)
-        if raw_calls:
-            for call in self._parse(raw_calls):
-                yield state.tool_call(call)
-            if len(fragments) and any(f["chunks"] > 1 for f in fragments.values()):
-                self.capabilities.set("streams_tool_calls", "yes", "observed")
-        yield self.record_usage(self._usage(usage_body, state))
-        assistant: dict[str, Any] = {"role": "assistant", "content": state.text}
-        if raw_calls:
-            assistant["tool_calls"] = raw_calls
-        yield Done(finish_reason=finish_reason, assistant_message=assistant)
+                        ending.finish_reason = choice["finish_reason"]
 
     def _decode(self, data: str) -> dict[str, Any]:
         try:
