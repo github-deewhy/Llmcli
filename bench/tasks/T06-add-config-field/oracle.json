@@ -1,0 +1,55 @@
+[
+  {
+    "tool_calls": [
+      {
+        "name": "read_file",
+        "arguments": {
+          "path": "settings.py"
+        }
+      },
+      {
+        "name": "read_file",
+        "arguments": {
+          "path": "loader.py"
+        }
+      },
+      {
+        "name": "read_file",
+        "arguments": {
+          "path": "server.py"
+        }
+      }
+    ]
+  },
+  {
+    "tool_calls": [
+      {
+        "name": "replace_in_file",
+        "arguments": {
+          "path": "settings.py",
+          "old_text": "    port: int = 8080\n",
+          "new_text": "    port: int = 8080\n    timeout: int = 30\n"
+        }
+      },
+      {
+        "name": "replace_in_file",
+        "arguments": {
+          "path": "loader.py",
+          "old_text": "        port=int(data.get(\"port\", 8080)),\n",
+          "new_text": "        port=int(data.get(\"port\", 8080)),\n        timeout=int(data.get(\"timeout\", 30)),\n"
+        }
+      },
+      {
+        "name": "replace_in_file",
+        "arguments": {
+          "path": "server.py",
+          "old_text": "return f\"{settings.host}:{settings.port}\"",
+          "new_text": "return f\"{settings.host}:{settings.port} (timeout {settings.timeout}s)\""
+        }
+      }
+    ]
+  },
+  {
+    "text": "Added `timeout` (default 30) to Settings, load_settings and describe."
+  }
+]

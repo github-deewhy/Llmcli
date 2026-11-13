@@ -1,0 +1,23 @@
+[
+  {
+    "tool_calls": [
+      {
+        "name": "list_files",
+        "arguments": {}
+      }
+    ]
+  },
+  {
+    "tool_calls": [
+      {
+        "name": "read_file",
+        "arguments": {
+          "path": "stamps.py"
+        }
+      }
+    ]
+  },
+  {
+    "text": "Date strings are parsed by `read_stamp` in `stamps.py`."
+  }
+]

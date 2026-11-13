@@ -1,0 +1,6 @@
+id = "T01"
+title = "Name the function that parses date strings"
+category = "explain"
+prompt = """Which function in this project parses date strings? Answer with the function name and the file it is in."""
+checker = ["python", "check_answer.py"]
+checker_timeout = 60

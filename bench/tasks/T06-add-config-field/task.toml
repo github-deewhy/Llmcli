@@ -1,0 +1,6 @@
+id = "T06"
+title = "Add a setting used across three modules"
+category = "multi-file"
+prompt = """Add a timeout setting: an integer number of seconds with default 30. Add it to the Settings class in settings.py, make load_settings in loader.py read it from the 'timeout' key (converted to int), and make describe() in server.py append ' (timeout Ns)' to its result, for example 'localhost:8080 (timeout 30s)'."""
+checker = ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "check_timeout.py"]
+checker_timeout = 60

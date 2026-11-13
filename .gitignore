@@ -44,3 +44,6 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Benchmark results (spec 15)
+bench-results/

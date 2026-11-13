@@ -9,6 +9,8 @@ class Conversation:
         self.system_prompt = system_prompt
         self.max_tokens = max_tokens
         self.messages: list[dict[str, Any]] = []
+        # How many times old turns were dropped to fit max_tokens (spec 15, 2.6).
+        self.trim_count = 0
 
     def add(self, role: str, content: str) -> None:
         """Add a message and automatically trim if necessary."""
@@ -48,6 +50,7 @@ class Conversation:
             if next_turn is None:
                 break
             self.messages = self.messages[next_turn:]
+            self.trim_count += 1
             total_tokens = sum(
                 estimate_tokens(str(message.get("content") or ""))
                 + estimate_tokens(json.dumps(message.get("tool_calls", []), ensure_ascii=False))

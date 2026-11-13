@@ -3,12 +3,13 @@
 import itertools
 import json
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from llmcli.coding_tools import ProjectCodingTools, tool_schemas
 from llmcli.history import Conversation
 from llmcli.providers.base import BaseProvider, ToolCall
-from llmcli.providers.events import ProviderError
+from llmcli.providers.events import ProviderError, Usage
 from llmcli.tool_protocol import (
     check_arguments,
     find_text_call,
@@ -31,6 +32,28 @@ AGENT_INSTRUCTIONS = (
 )
 
 
+@dataclass
+class RunOutcome:
+    """How one ``run()`` ended, for the benchmark harness (spec 15, section 2.6).
+
+    ``stop_reason`` is one of: ``answered`` (final text after using tools),
+    ``no_tools`` (final text without any tool use), ``round_limit``,
+    ``provider_error``, ``interrupted`` (Ctrl-C during a reply) or
+    ``cancelled`` (Ctrl-C during a tool).
+    """
+
+    stop_reason: str = "answered"
+    rounds: int = 0
+    tool_calls: int = 0
+    invalid_calls: int = 0
+    repairs: int = 0
+    mode_switched: bool = False
+    error: str | None = None
+    error_type: str | None = None
+    final_text: str = ""
+    usages: list[Usage] = field(default_factory=list)
+
+
 class CodingAgent:
     def __init__(
         self,
@@ -47,6 +70,7 @@ class CodingAgent:
         self.ui = ui
         self.confirm = confirm
         self.set_tool_mode(tool_mode)
+        self._outcome = RunOutcome()
 
     def set_tool_mode(self, tool_mode: str) -> None:
         """``auto`` and ``native`` start with native calls; ``text`` uses the text protocol."""
@@ -58,13 +82,16 @@ class CodingAgent:
         self.provider = provider
         self.set_tool_mode(tool_mode)
 
-    def run(self, prompt: str) -> None:
+    def run(self, prompt: str) -> RunOutcome:
+        outcome = RunOutcome()
+        self._outcome = outcome
         self.conversation.add("user", prompt)
         schemas = tool_schemas()
         used_tools = False
         repairs_left = REPAIRS_PER_TURN
         for _round_number in range(1, MAX_TOOL_ROUNDS + 1):
             text_mode = self.mode == "text"
+            outcome.rounds += 1
             try:
                 result = self.ui.render_events(
                     self.provider.stream(
@@ -75,14 +102,20 @@ class CodingAgent:
                 )
             except ProviderError as error:
                 self.ui.print_error(f"Agent request failed: {error}")
-                return
+                outcome.stop_reason = "provider_error"
+                outcome.error = str(error)
+                outcome.error_type = type(error).__name__
+                return outcome
+            if result.usage is not None:
+                outcome.usages.append(result.usage)
 
             if result.interrupted:
                 if not used_tools and self.conversation.messages[-1:] == [
                     {"role": "user", "content": prompt}
                 ]:
                     self.conversation.messages.pop()
-                return
+                outcome.stop_reason = "interrupted"
+                return outcome
 
             assistant_message = dict(
                 result.assistant_message or {"role": "assistant", "content": result.text}
@@ -99,15 +132,19 @@ class CodingAgent:
                 if found.call is not None:
                     calls, via_text = [found.call], True
                     self._note_text_call()
-                elif found.error is not None and repairs_left > 0:
-                    repairs_left -= 1
-                    self.ui.print_info(f"Tool call rejected: {found.error}")
-                    self.conversation.add(
-                        "user", f"Tool call error: {found.error} Reply with a corrected tool call."
-                    )
-                    continue
+                elif found.error is not None:
+                    outcome.invalid_calls += 1
+                    if repairs_left > 0:
+                        repairs_left -= 1
+                        outcome.repairs += 1
+                        self.ui.print_info(f"Tool call rejected: {found.error}")
+                        self.conversation.add(
+                            "user", f"Tool call error: {found.error} Reply with a corrected tool call."
+                        )
+                        continue
 
             if not calls:
+                outcome.final_text = result.text
                 if not result.text:
                     self.ui.print_info("The model returned no response.")
                 if not used_tools:
@@ -115,16 +152,20 @@ class CodingAgent:
                         "No tools were invoked; no files were changed or tests run. "
                         "The selected model may not support tool calling."
                     )
-                return
+                outcome.stop_reason = "answered" if used_tools else "no_tools"
+                return outcome
 
             used_tools = True
             if not self._run_calls(calls, via_text, schemas):
-                return
+                outcome.stop_reason = "cancelled"
+                return outcome
 
         self.ui.print_error(
             f"Agent paused after {MAX_TOOL_ROUNDS} tool rounds. "
             "Review the work and send a follow-up to continue."
         )
+        outcome.stop_reason = "round_limit"
+        return outcome
 
     def _note_text_call(self) -> None:
         if self.mode == "text":
@@ -132,6 +173,7 @@ class CodingAgent:
         self.text_call_streak += 1
         if self.tool_mode == "auto" and self.text_call_streak >= TEXT_CALLS_BEFORE_SWITCH:
             self.mode = "text"
+            self._outcome.mode_switched = True
             self.ui.print_info(
                 "The model writes tool calls as text; switched to text tool calls for this session "
                 '(set tool_mode = "native" in config.toml to prevent this).'
@@ -149,6 +191,9 @@ class CodingAgent:
                     if call.name in parameters
                     else None
                 )
+                self._outcome.tool_calls += 1
+                if problem or call.name not in parameters:
+                    self._outcome.invalid_calls += 1
                 if problem:
                     result = json.dumps({"error": f"{call.name}: {problem}"})
                 else:
