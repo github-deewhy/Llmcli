@@ -21,6 +21,7 @@ from llmcli.providers.events import (
     Done,
     ReasoningDelta,
     TextDelta,
+    TextIsReasoning,
     ToolCallEvent,
     Usage,
 )
@@ -310,6 +311,10 @@ class StreamingUI:
                     on_change()
                 elif isinstance(event, ReasoningDelta):
                     result.reasoning += event.text
+                    on_change()
+                elif isinstance(event, TextIsReasoning):
+                    result.reasoning += result.text
+                    result.text = ""
                     on_change()
                 elif isinstance(event, ToolCallEvent):
                     result.tool_calls.append(event.call)

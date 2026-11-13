@@ -13,6 +13,7 @@ from llmcli.providers.events import (
     Event,
     ReasoningDelta,
     TextDelta,
+    TextIsReasoning,
     ToolCallEvent,
     Usage,
 )
@@ -78,6 +79,12 @@ class StreamState:
             self.capabilities.set("reasoning", "inline", "observed")
 
     def _emit(self, kind: str, piece: str) -> Iterator[Event]:
+        if kind == "retract":
+            # The text emitted so far was reasoning (orphan ``</think>``).
+            if self.text:
+                self.text = ""
+                yield TextIsReasoning()
+            return
         if not piece:
             return
         if kind == "reasoning":

@@ -3,6 +3,20 @@
 Format: newest first. Update this file and the docs (README.md, user-guide.md,
 config.toml.example) in the same change as the code.
 
+## 0.5.1
+
+Fixes from the first benchmark run on a real model (Ollama, `qwen3:4b`).
+
+### Fixed
+- Some thinking models (Ollama's `qwen3:4b` is Qwen3 4B Thinking 2507) write their
+  reasoning into the answer and end it with `</think>` without ever opening it, even
+  with `think = false`. That text was shown as the answer, stored in history and sent
+  back every round. It is now treated as reasoning: hidden unless `/thinking on`,
+  never stored or re-sent. Limitation: an answer that mentions `</think>` before any
+  other tag loses the text before it.
+- Benchmark reports record the commit even when `git` is not installed (read from
+  `.git`).
+
 ## 0.5.0
 
 M2 part 1: benchmark harness, tested with scripted replies only.
