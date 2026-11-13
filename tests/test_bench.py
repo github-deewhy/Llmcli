@@ -263,6 +263,7 @@ def test_conversation_counts_trims():
     conversation.add("user", "a" * 40)
     conversation.add("assistant", "b" * 40)
     conversation.add("user", "c" * 40)
+    conversation.fit(0)
     assert conversation.trim_count >= 1
 
 

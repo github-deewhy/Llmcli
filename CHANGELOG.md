@@ -3,7 +3,24 @@
 Format: newest first. Update this file and the docs (README.md, user-guide.md,
 config.toml.example) in the same change as the code.
 
-## 0.7.1
+## 0.8.0
+
+### Changed
+- History budgeting now counts everything sent: system prompt, agent instructions and
+  tool schemas, not only the messages (M3 part C, spec 16).
+- Part of the window is kept free for the reply: `max_tokens`, at most a quarter of
+  `context_size` (with the defaults 8192/4096: 2048 tokens).
+- The 4-characters-per-token estimate is calibrated from the prompt token count the
+  server reports (latest request, limited to 2–6 characters per token, kept in memory
+  only, reset on `/profile`).
+- History is trimmed right before each request instead of when a message is added.
+
+### Added
+- One line when history is trimmed (`History trimmed: dropped N oldest turns …`).
+- A warning (at most once per question) when the prompt is still over budget and no
+  older turn is left to drop.
+- Benchmark runs pass `--max-tokens` to the budget, like the CLI.
+
 
 ### Changed
 - `stop_guard` is now on by default. Measured on 2026-11-13 (NVIDIA API, 6 tasks × 3

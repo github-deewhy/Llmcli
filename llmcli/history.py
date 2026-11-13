@@ -1,47 +1,53 @@
 """Manages conversation history and context window trimming."""
 
-import json
 from typing import Any
+
+from llmcli.budget import TokenEstimator, TrimResult, messages_chars, reply_reserve
 
 
 class Conversation:
-    def __init__(self, system_prompt: str, max_tokens: int):
+    """Chat history plus the token budget it must fit in (spec 16, part C).
+
+    ``max_tokens`` is the model's context window (``context_size``). ``reply_tokens``
+    is the configured reply length (``max_tokens`` in config.toml); part of it is kept
+    free for the reply (see ``budget.reply_reserve``). Messages are not trimmed when
+    added: callers call ``fit()`` right before each request, when the fixed part of the
+    prompt (system prompt, instructions, tool schemas) is known.
+    """
+
+    def __init__(self, system_prompt: str, max_tokens: int, reply_tokens: int | None = None):
         self.system_prompt = system_prompt
         self.max_tokens = max_tokens
+        self.reply_tokens = reply_tokens
         self.messages: list[dict[str, Any]] = []
-        # How many times old turns were dropped to fit max_tokens (spec 15, 2.6).
+        self.estimator = TokenEstimator()
+        # How many turns were dropped to fit the budget (spec 15, 2.6).
         self.trim_count = 0
 
     def add(self, role: str, content: str) -> None:
-        """Add a message and automatically trim if necessary."""
         self.add_message({"role": role, "content": content})
 
     def add_message(self, message: dict[str, Any]) -> None:
         """Append a provider message, including structured tool calls/results."""
         self.messages.append(message)
-        self._trim()
 
-    def _trim(self) -> None:
+    def prompt_budget(self) -> int:
+        """Tokens available for the whole prompt: the window minus the reply reserve."""
+        return self.max_tokens - reply_reserve(self.max_tokens, self.reply_tokens)
+
+    def fit(self, fixed_chars: int) -> TrimResult:
+        """Drop the oldest whole turns until the estimated prompt fits the budget.
+
+        ``fixed_chars`` is everything sent besides ``messages``: the system message
+        as sent and the tool schemas. A turn starts at a user message; the latest
+        one is never dropped, so tool calls stay together with their results.
         """
-        Trim oldest user/assistant pairs if estimated tokens exceed max_tokens.
-        The system prompt is never dropped (it is injected at API time, not stored here).
-        """
-        # Rough estimation: 1 token ~= 4 characters
-        def estimate_tokens(text: str) -> int:
-            return len(text) // 4
-
-        # Calculate total tokens of current history
-        total_tokens = sum(
-            estimate_tokens(str(m.get("content") or ""))
-            + estimate_tokens(json.dumps(m.get("tool_calls", []), ensure_ascii=False))
-            for m in self.messages
-        )
-
-        if total_tokens <= self.max_tokens:
-            return
-
-        # Drop complete older user turns so tool-call/result message pairs stay intact.
-        while total_tokens > self.max_tokens:
+        budget = self.prompt_budget()
+        fixed = self.estimator.tokens(fixed_chars)
+        total = fixed + self.estimator.tokens(messages_chars(self.messages))
+        dropped = 0
+        freed = 0
+        while total > budget:
             next_turn = next(
                 (index for index, message in enumerate(self.messages[1:], start=1)
                  if message.get("role") == "user"),
@@ -49,13 +55,23 @@ class Conversation:
             )
             if next_turn is None:
                 break
+            removed = self.estimator.tokens(messages_chars(self.messages[:next_turn]))
             self.messages = self.messages[next_turn:]
-            self.trim_count += 1
-            total_tokens = sum(
-                estimate_tokens(str(message.get("content") or ""))
-                + estimate_tokens(json.dumps(message.get("tool_calls", []), ensure_ascii=False))
-                for message in self.messages
-            )
+            dropped += 1
+            freed += removed
+            total = fixed + self.estimator.tokens(messages_chars(self.messages))
+        self.trim_count += dropped
+        return TrimResult(
+            turns_dropped=dropped,
+            tokens_freed=freed,
+            estimated_tokens=total,
+            budget=budget,
+            over_budget=total > budget,
+        )
+
+    def fit_for_chat(self) -> TrimResult:
+        """``fit()`` for a plain chat request: the only fixed part is the system prompt."""
+        return self.fit(len(self.system_prompt or ""))
 
     def get_messages_for_api(self) -> list[dict[str, Any]]:
         """Return messages formatted for the API, with system prompt prepended."""

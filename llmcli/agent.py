@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from llmcli.budget import messages_chars, over_budget_warning, schemas_chars, trim_notice
 from llmcli.coding_tools import ProjectCodingTools
 from llmcli.history import Conversation
 from llmcli.providers.base import BaseProvider, ToolCall
@@ -117,15 +118,15 @@ class CodingAgent:
         self._previous_call = None
         used_tools = False
         repairs_left = REPAIRS_PER_TURN
+        warned = False
         for _round_number in range(1, MAX_TOOL_ROUNDS + 1):
             text_mode = self.mode == "text"
             outcome.rounds += 1
+            sent_schemas = None if text_mode else schemas
+            messages, sent_chars, warned = self._fit_request(text_mode, schemas, warned)
             try:
                 result = self.ui.render_events(
-                    self.provider.stream(
-                        self._messages_for_agent(text_mode, schemas),
-                        None if text_mode else schemas,
-                    ),
+                    self.provider.stream(messages, sent_schemas),
                     show_empty=False,
                 )
             except ProviderError as error:
@@ -136,6 +137,7 @@ class CodingAgent:
                 return outcome
             if result.usage is not None:
                 outcome.usages.append(result.usage)
+                self.conversation.estimator.calibrate(sent_chars, result.usage.prompt_tokens)
 
             if result.interrupted:
                 if not used_tools and self.conversation.messages[-1:] == [
@@ -281,6 +283,32 @@ class CodingAgent:
                 status or "failed",
                 data.get("output") or data.get("error", ""),
             )
+
+    def _fit_request(
+        self, text_mode: bool, schemas: list[dict[str, Any]], warned: bool
+    ) -> tuple[list[dict], int, bool]:
+        """Trim history to the budget and build the request (spec 16, C1 and C2).
+
+        Returns the messages to send, their size in characters including tool schemas
+        (for calibration), and whether the over-budget warning has now been shown in
+        this run (it is shown at most once per run).
+        """
+        # In text mode the tool list is part of the system message, not sent as schemas.
+        sent_schemas = None if text_mode else schemas
+        messages = self._messages_for_agent(text_mode, schemas)
+        system_chars = len(str(messages[0].get("content") or "")) if messages else 0
+        fixed_chars = system_chars + schemas_chars(sent_schemas)
+        trim = self.conversation.fit(fixed_chars)
+        context_size = self.conversation.max_tokens
+        notice = trim_notice(trim, context_size)
+        if notice:
+            self.ui.print_info(notice)
+            messages = self._messages_for_agent(text_mode, schemas)
+        warning = over_budget_warning(trim, context_size)
+        if warning and not warned:
+            self.ui.print_error(warning)
+            warned = True
+        return messages, messages_chars(messages) + schemas_chars(sent_schemas), warned
 
     def _messages_for_agent(self, text_mode: bool, schemas: list[dict[str, Any]]) -> list[dict]:
         instructions = AGENT_INSTRUCTIONS

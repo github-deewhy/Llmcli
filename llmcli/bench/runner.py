@@ -204,6 +204,7 @@ def run_task(
     profile: str,
     *,
     context_size: int,
+    reply_tokens: int | None = None,
     tool_mode: str = "auto",
     repeat: int = 1,
     deadline_s: float = DEFAULT_DEADLINE_S,
@@ -223,7 +224,7 @@ def run_task(
         home.mkdir()
 
         ui = StreamingUI(Console(file=StringIO(), force_terminal=False, width=120))
-        conversation = Conversation(SYSTEM_PROMPT, max_tokens=context_size)
+        conversation = Conversation(SYSTEM_PROMPT, max_tokens=context_size, reply_tokens=reply_tokens)
         paced = PacedProvider(provider, pacer) if pacer is not None else None
         inner = cast(BaseProvider, paced) if paced is not None else provider
 
