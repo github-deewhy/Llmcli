@@ -41,6 +41,16 @@ class Usage:
 
 
 @dataclass(frozen=True)
+class TextIsReasoning:
+    """The answer text sent so far in this reply was reasoning.
+
+    Some thinking models (for example Qwen3 4B Thinking 2507 on Ollama) start
+    reasoning without an opening ``<think>`` tag and end it with ``</think>``.
+    On this event, consumers move the text they collected so far to reasoning.
+    """
+
+
+@dataclass(frozen=True)
 class Done:
     """End of one reply. ``assistant_message`` is what goes into history (no reasoning)."""
 
@@ -48,7 +58,7 @@ class Done:
     assistant_message: dict[str, Any]
 
 
-Event = TextDelta | ReasoningDelta | ToolCallEvent | Usage | Done
+Event = TextDelta | ReasoningDelta | TextIsReasoning | ToolCallEvent | Usage | Done
 
 
 # --- capabilities ------------------------------------------------------------

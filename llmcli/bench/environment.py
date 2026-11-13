@@ -25,9 +25,35 @@ def _git(*args: str) -> str | None:
     return completed.stdout.strip() if completed.returncode == 0 else None
 
 
-def git_info() -> dict[str, Any]:
+def _commit_from_files(root: Path) -> str | None:
+    """Read HEAD without the git binary (for containers that have none)."""
+    git_dir = root / ".git"
+    try:
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+        if not head.startswith("ref: "):
+            return head or None
+        ref = head[5:]
+        ref_file = git_dir / ref
+        if ref_file.is_file():
+            return ref_file.read_text(encoding="utf-8").strip() or None
+        packed = git_dir / "packed-refs"
+        if packed.is_file():
+            for line in packed.read_text(encoding="utf-8").splitlines():
+                parts = line.split()
+                if len(parts) == 2 and parts[1] == ref:
+                    return parts[0]
+    except OSError:
+        return None
+    return None
+
+
+def git_info(root: Path | None = None) -> dict[str, Any]:
+    """Commit and whether the tree has uncommitted changes (None when unknown)."""
+    root = root or REPO_ROOT
     commit = _git("rev-parse", "HEAD")
-    status = _git("status", "--porcelain") if commit else None
+    if commit is None:
+        return {"commit": _commit_from_files(root), "dirty": None}
+    status = _git("status", "--porcelain")
     return {"commit": commit, "dirty": None if status is None else bool(status)}
 
 

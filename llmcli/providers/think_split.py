@@ -3,6 +3,11 @@
 Some servers put a thinking model's reasoning inside the answer text. Tags can
 arrive split across chunks (``"<thi"`` + ``"nk>"``), so a short tail that could
 be the start of a tag is held back until the next chunk decides it.
+
+Some models never write the opening tag: the reply starts with reasoning and
+the first tag is ``</think>``. Then everything before it was reasoning, and the
+splitter returns a ``("retract", "")`` pair so the caller can move the text it
+already emitted to reasoning (llmcli 0.5.1).
 """
 
 from __future__ import annotations
@@ -32,6 +37,16 @@ class ThinkSplitter:
         data = self.pending + chunk
         self.pending = ""
         while data:
+            if not self.in_think and not self.seen_tag:
+                close_index = data.find(CLOSE)
+                open_index = data.find(OPEN)
+                if close_index >= 0 and (open_index < 0 or close_index < open_index):
+                    out.append(("retract", ""))
+                    if close_index:
+                        out.append(("reasoning", data[:close_index]))
+                    data = data[close_index + len(CLOSE):]
+                    self.seen_tag = True
+                    continue
             tag = CLOSE if self.in_think else OPEN
             index = data.find(tag)
             if index >= 0:
@@ -42,6 +57,8 @@ class ThinkSplitter:
                 self.seen_tag = True
                 continue
             keep = _partial_tag_suffix(data, tag)
+            if not self.in_think and not self.seen_tag:
+                keep = max(keep, _partial_tag_suffix(data, CLOSE))
             emit = data[: len(data) - keep] if keep else data
             if emit:
                 out.append(("reasoning" if self.in_think else "text", emit))
