@@ -3,6 +3,14 @@
 Format: newest first. Update this file and the docs (README.md, user-guide.md,
 config.toml.example) in the same change as the code.
 
+## 0.7.1
+
+### Changed
+- `stop_guard` is now on by default. Measured on 2026-11-13 (NVIDIA API, 6 tasks × 3
+  repeats): Lightning 30B-A3B passed 18/18 with 1 round-limit hit (5 without it).
+  `edit_matching` stays `exact` (no measured gain) and `edit_tools` stays `replace`
+  (helps the small Bolt model, costs Lightning 2 of 18); both remain available.
+
 ## 0.7.0
 
 M3 part B: edit reliability and stopping (spec 16). The new behaviours are off by

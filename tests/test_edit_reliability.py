@@ -256,6 +256,7 @@ def test_config_carries_settings(monkeypatch):
                  'endpoint = "http://h"\nmodel = "m"\nedit_matching = "tolerant"\n')
     config = load_config({}, file=file)
     assert (config.edit_matching, config.edit_tools, config.stop_guard) == ("tolerant", "replace", True)
+    assert load_config({}, file=parse('[profiles.p]\nprovider = "ollama"\nendpoint = "http://h"\nmodel = "m"\n')).stop_guard is True
 
 
 def test_run_task_uses_settings(tmp_path):
@@ -289,6 +290,7 @@ def test_set_overrides_reach_run_and_report(tmp_path, monkeypatch):
                  "--set", "edit_matching=tolerant", "--set", "stop_guard=true"])
     assert code == 0
     assert seen == [AgentSettings("tolerant", "replace", True)]
+    assert AgentSettings().stop_guard is True
     report = json.loads((out / "report.json").read_text())
     assert report["environment"]["settings"]["overrides"] == {"edit_matching": "tolerant", "stop_guard": True}
     profile = report["environment"]["profiles"][0]

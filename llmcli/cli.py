@@ -367,7 +367,7 @@ def run_repl(config, provider, conversation: Conversation, ui: StreamingUI, memo
     agent.apply_settings(
         getattr(config, "edit_matching", "exact"),
         getattr(config, "edit_tools", "replace"),
-        getattr(config, "stop_guard", False),
+        getattr(config, "stop_guard", True),
     )
 
     def switch_profile(name: str, keep: bool) -> None:

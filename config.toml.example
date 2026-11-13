@@ -19,7 +19,7 @@ max_tokens = 4096           # a profile may override this
 # Experimental agent settings (defaults may change after measurement):
 # edit_matching = "exact"   # exact or tolerant (ignore trailing spaces, undo \" in edits)
 # edit_tools = "replace"    # replace or replace+lines (adds the edit_lines tool)
-# stop_guard = false        # true: answer in text when done; skip exact repeat calls
+# stop_guard = true         # answer in text when done; skip exact repeat calls
 
 # One profile per server. provider, endpoint and model are required.
 # Allowed in a profile: provider, endpoint, model, api_key, context_size,

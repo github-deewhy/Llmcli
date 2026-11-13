@@ -166,7 +166,7 @@ use letters, digits, `.`, `_` and `-`.
 | `tool_mode` | yes | yes | `auto` | `auto` (native, accepts text calls and switches after two), `native` (never reads text calls) or `text` (always uses text calls) |
 | `edit_matching` | yes | yes | `exact` | `exact`, or `tolerant`: if `old_text` is not found exactly, try once with trailing spaces ignored and escaped quotes (`\"`) undone; applied only if exactly one place matches, and the result says so. Experimental; the default may change after measurement |
 | `edit_tools` | yes | yes | `replace` | `replace`, or `replace+lines` to also offer `edit_lines` (replace a range of line numbers as `read_file` shows them). Experimental |
-| `stop_guard` | yes | yes | `false` | `true` tells the model to answer in text when the task is done, and does not run a tool call that repeats the previous one exactly. Experimental |
+| `stop_guard` | yes | yes | `true` | `true` tells the model to answer in text when the task is done, and does not run a tool call that repeats the previous one exactly. On by default since 0.7.1 (measured: fewer round-limit hits) |
 
 Server, model and key settings are profile-only, so a key can never be sent to another
 profile's endpoint. A setting in the wrong table, an unknown setting or a wrong type is
