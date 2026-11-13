@@ -99,6 +99,9 @@ def profile_info(name: str, config: Config) -> dict[str, Any]:
         "extra_body": config.extra_body,
         "tool_mode": config.tool_mode,
         "request_timeout": config.request_timeout,
+        "edit_matching": config.edit_matching,
+        "edit_tools": config.edit_tools,
+        "stop_guard": config.stop_guard,
     }
 
 

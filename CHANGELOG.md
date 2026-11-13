@@ -3,6 +3,30 @@
 Format: newest first. Update this file and the docs (README.md, user-guide.md,
 config.toml.example) in the same change as the code.
 
+## 0.7.0
+
+M3 part B: edit reliability and stopping (spec 16). The new behaviours are off by
+default until the benchmark shows which help; only the clearer error is always on.
+
+### Added
+- When `replace_in_file` cannot find `old_text`, the error now shows the most similar
+  lines of the file with their line numbers (up to 15), so the model can copy the
+  exact text.
+- Setting `edit_matching = "tolerant"`: if `old_text` is not found exactly, try once
+  with trailing spaces ignored and escaped quotes (`\"`, `\'`) undone, in both
+  `old_text` and `new_text`. The edit applies only if exactly one place matches and
+  the result says what was ignored. Escaped newlines are not touched.
+- Setting `edit_tools = "replace+lines"`: adds the `edit_lines` tool (replace a range
+  of line numbers as `read_file` shows them), with the same diff and approval.
+- Setting `stop_guard = true`: one sentence asks the model to answer in text when the
+  task is done, and a tool call identical to the previous one is not run again; the
+  model gets a short note instead.
+- Benchmark: `--set KEY=VALUE` overrides these settings for a run; reports show the
+  settings per profile and a "Repeats skipped" column. `report.json` schema version 3.
+
+### Changed
+- Benchmark reports are labelled `m3b-v0.7`.
+
 ## 0.6.0
 
 M3 part A: measurement fixes (spec 16). Agent behaviour is unchanged.

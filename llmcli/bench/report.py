@@ -13,7 +13,8 @@ from typing import Any
 from llmcli.bench.runner import RunRecord
 
 # 2 (llmcli 0.6.0): adds tool_errors, per-run errors, per-cell common errors and the rpm setting.
-SCHEMA_VERSION = 2
+# 3 (llmcli 0.7.0): adds repeat_skips, the agent settings per profile and settings.overrides.
+SCHEMA_VERSION = 3
 
 
 def _sum(values: list[int | None]) -> int | None:
@@ -46,6 +47,7 @@ def run_metrics(record: RunRecord) -> dict[str, Any]:
         "tool_calls": outcome.tool_calls,
         "invalid_calls": outcome.invalid_calls,
         "tool_errors": outcome.tool_errors,
+        "repeat_skips": outcome.repeat_skips,
         "tool_call_validity": (
             round((outcome.tool_calls - min(outcome.invalid_calls, outcome.tool_calls)) / outcome.tool_calls, 3)
             if outcome.tool_calls
@@ -118,6 +120,7 @@ def aggregate(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "tool_calls": sum(m["tool_calls"] for m in metrics),
                 "invalid_calls": sum(m["invalid_calls"] for m in metrics),
                 "tool_errors": sum(m["tool_errors"] for m in metrics),
+                "repeat_skips": sum(m.get("repeat_skips", 0) for m in metrics),
                 "loop_guard_triggers": sum(1 for m in metrics if m["loop_guard_triggered"]),
                 "peak_context_utilisation": max(
                     (m["peak_context_utilisation"] for m in metrics if m["peak_context_utilisation"] is not None),
@@ -202,6 +205,8 @@ def markdown(report: dict[str, Any]) -> str:
         f"| Deadline per task | {env['settings']['deadline_s']:g} s |",
         f"| max_tokens override | {_fmt(env['settings']['max_tokens'])} |",
         f"| Requests per minute limit | {_fmt(env['settings'].get('rpm'))} |",
+        f"| Agent setting overrides (--set) | "
+        f"{', '.join(f'{k}={v}' for k, v in env['settings'].get('overrides', {}).items()) or '–'} |",
         "",
     ]
     for profile in env["profiles"]:
@@ -211,13 +216,15 @@ def markdown(report: dict[str, Any]) -> str:
             f"Model `{profile.get('model')}` at `{profile.get('endpoint')}`, "
             f"provider {profile.get('provider')}, context_size {profile.get('context_size')}, "
             f"max_tokens {profile.get('max_tokens')}, temperature {_fmt(profile.get('temperature'))}, "
-            f"tool_mode {profile.get('tool_mode')}, extra_body `{json.dumps(profile.get('extra_body', {}))}`. "
+            f"tool_mode {profile.get('tool_mode')}, extra_body `{json.dumps(profile.get('extra_body', {}))}`, "
+            f"edit_matching {profile.get('edit_matching')}, edit_tools {profile.get('edit_tools')}, "
+            f"stop_guard {_fmt(profile.get('stop_guard'))}. "
             f"Server version {_fmt(profile.get('server_version'))}, model digest {_fmt(profile.get('model_digest'))}.",
             "",
             "| Task | Passed | Wall s mean (min–max) | Prompt tokens mean (min–max) | Gen tok/s mean (min–max) "
-            "| Rounds mean (min–max) | Invalid / tool calls | Tool errors | Loop guard | Peak context | Trims "
-            "| Stop reasons |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| Rounds mean (min–max) | Invalid / tool calls | Tool errors | Repeats skipped | Loop guard "
+            "| Peak context | Trims | Stop reasons |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
         cells = [cell for cell in report["cells"] if cell["profile"] == profile["name"]]
         for cell in cells:
@@ -226,7 +233,7 @@ def markdown(report: dict[str, Any]) -> str:
                 f"| {cell['task_id']} | {cell['passed']}/{cell['runs']} | {_fmt_spread(cell['wall_s'])} "
                 f"| {_fmt_spread(cell['prompt_tokens'])} | {_fmt_spread(cell['gen_tokens_per_s'])} "
                 f"| {_fmt_spread(cell['rounds'])} | {cell['invalid_calls']} / {cell['tool_calls']} "
-                f"| {cell['tool_errors']} | {cell['loop_guard_triggers']} | {_fmt(cell['peak_context_utilisation'])} "
+                f"| {cell['tool_errors']} | {cell['repeat_skips']} | {cell['loop_guard_triggers']} | {_fmt(cell['peak_context_utilisation'])} "
                 f"| {cell['trims']} | {reasons} |"
             )
         lines.append("")

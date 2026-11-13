@@ -158,6 +158,9 @@ class FakeAgent:
     def set_provider(self, provider, tool_mode):
         self.provider, self.tool_mode = provider, tool_mode
 
+    def apply_settings(self, edit_matching, edit_tools, stop_guard):
+        self.settings = (edit_matching, edit_tools, stop_guard)
+
 
 def switch_setup(home, monkeypatch, healthy=True):
     write_profiles(home)
@@ -175,6 +178,7 @@ def test_switch_replaces_provider_config_and_clears_history(home, monkeypatch):
     new = switch_profile_session("remote", False, config, convo, agent, ui)
     assert new is agent.provider and new.model == "remote-model"
     assert agent.original.closed and agent.tool_mode == "auto"
+    assert agent.settings == ("exact", "replace", False)
     assert config.profile == "remote" and config.provider == "openai_compat"
     assert config.api_key == "k" and convo.max_tokens == 8192
     assert convo.messages == []

@@ -9,6 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from llmcli.edit_matching import not_found_message, tolerant_match
 from llmcli.security import IGNORED_DIRECTORIES, filename_block_reason
 from llmcli.ui import StreamingUI
 
@@ -134,10 +135,45 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 ]
 
 
+EDIT_LINES_DEFINITION: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "edit_lines",
+        "description": (
+            "Replace lines start_line to end_line (inclusive, numbered as read_file shows them) "
+            "with new_text. An empty new_text deletes the lines. Shows a diff and asks permission first."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "start_line": {"type": "integer", "minimum": 1},
+                "end_line": {"type": "integer", "minimum": 1},
+                "new_text": {"type": "string"},
+            },
+            "required": ["path", "start_line", "end_line", "new_text"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
 class ProjectCodingTools:
-    def __init__(self, project_root: Path, ui: StreamingUI):
+    def __init__(
+        self,
+        project_root: Path,
+        ui: StreamingUI,
+        edit_matching: str = "exact",
+        edit_tools: str = "replace",
+    ):
         self.root = project_root.resolve()
         self.ui = ui
+        self.edit_matching = edit_matching  # "exact" or "tolerant" (spec 16, B2)
+        self.edit_tools = edit_tools  # "replace" or "replace+lines" (spec 16, B3)
+
+    def schemas(self) -> list[dict[str, Any]]:
+        """The tool definitions offered to the model with the current settings."""
+        return tool_schemas(self.edit_tools)
 
     def execute(
         self,
@@ -153,6 +189,8 @@ class ProjectCodingTools:
             "create_file": self._create_file,
             "run_tests": self._run_tests,
         }
+        if self.edit_tools == "replace+lines":
+            handlers["edit_lines"] = self._edit_lines
         handler = handlers.get(name)
         if handler is None:
             return self._json({"error": f"Unknown tool: {name}"})
@@ -350,9 +388,59 @@ class ProjectCodingTools:
             raise ValueError("new_text must be a string.")
         original = path.read_text(encoding="utf-8")
         occurrences = original.count(old_text)
-        if occurrences != 1:
+        note = None
+        if occurrences == 1:
+            updated = original.replace(old_text, new_text, 1)
+        elif occurrences > 1:
             raise ValueError(f"Expected old_text exactly once, found it {occurrences} times.")
-        updated = original.replace(old_text, new_text, 1)
+        elif self.edit_matching == "tolerant":
+            match, places = tolerant_match(original, old_text, new_text)
+            if match is None and places > 1:
+                raise ValueError(
+                    f"Expected old_text exactly once, found it 0 times exactly and {places} times "
+                    "with trailing whitespace and escaped quotes ignored; include more lines."
+                )
+            if match is None:
+                raise ValueError(not_found_message(original, old_text))
+            updated = original[:match.start] + match.new_text + original[match.end:]
+            note = f"old_text did not match exactly; matched once with {match.ignored} ignored."
+        else:
+            raise ValueError(not_found_message(original, old_text))
+        return self._apply_edit(path, original, updated, confirm, note)
+
+    def _edit_lines(self, arguments: dict[str, Any], confirm: Callable[[str], bool]) -> dict[str, Any]:
+        self._validate_arguments(arguments, {"path", "start_line", "end_line", "new_text"}, set())
+        path = self._resolve_path(arguments["path"])
+        if not path.is_file():
+            raise ValueError("The requested path is not a file.")
+        if path.stat().st_size > MAX_FILE_BYTES:
+            raise ValueError(f"File exceeds the {MAX_FILE_BYTES}-byte edit limit.")
+        start, end, new_text = arguments["start_line"], arguments["end_line"], arguments["new_text"]
+        if not isinstance(new_text, str):
+            raise ValueError("new_text must be a string.")
+        original = path.read_text(encoding="utf-8")
+        lines = original.splitlines(keepends=True)
+        for name, value in (("start_line", start), ("end_line", end)):
+            if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= len(lines):
+                raise ValueError(f"{name} must be a line number from 1 to {len(lines)}.")
+        if end < start:
+            raise ValueError("end_line must not be smaller than start_line.")
+        replacement = new_text
+        last_replaced = lines[end - 1]
+        if replacement and not replacement.endswith("\n") and last_replaced.endswith("\n"):
+            replacement += "\n"
+        updated = "".join(lines[:start - 1]) + replacement + "".join(lines[end:])
+        return self._apply_edit(path, original, updated, confirm, None)
+
+    def _apply_edit(
+        self,
+        path: Path,
+        original: str,
+        updated: str,
+        confirm: Callable[[str], bool],
+        note: str | None,
+    ) -> dict[str, Any]:
+        """Show the diff, ask, check the file did not change meanwhile, write."""
         relative = path.relative_to(self.root).as_posix()
         diff = self._diff(relative, original, updated)
         self.ui.print_diff(relative, diff)
@@ -361,7 +449,10 @@ class ProjectCodingTools:
         if path.read_text(encoding="utf-8") != original:
             raise ValueError("File changed while approval was pending; no edit was applied.")
         path.write_text(updated, encoding="utf-8")
-        return {"status": "updated", "path": relative, "diff": diff}
+        result: dict[str, Any] = {"status": "updated", "path": relative, "diff": diff}
+        if note:
+            result["note"] = note
+        return result
 
     def _create_file(self, arguments: dict[str, Any], confirm: Callable[[str], bool]) -> dict[str, Any]:
         self._validate_arguments(arguments, {"path", "content"}, set())
@@ -466,5 +557,9 @@ class ProjectCodingTools:
         return json.dumps(value, ensure_ascii=False)
 
 
-def tool_schemas() -> list[dict[str, Any]]:
-    return TOOL_DEFINITIONS
+def tool_schemas(edit_tools: str = "replace") -> list[dict[str, Any]]:
+    """Tool definitions; ``edit_tools = "replace+lines"`` adds ``edit_lines`` after ``replace_in_file``."""
+    if edit_tools != "replace+lines":
+        return TOOL_DEFINITIONS
+    position = next(i for i, d in enumerate(TOOL_DEFINITIONS) if d["function"]["name"] == "replace_in_file") + 1
+    return [*TOOL_DEFINITIONS[:position], EDIT_LINES_DEFINITION, *TOOL_DEFINITIONS[position:]]

@@ -11,13 +11,22 @@ from typing import Any
 from llmcli.bench import CONFIGURATION, DEFAULT_RESULTS_DIR, DEFAULT_TASKS_DIR
 from llmcli.bench.environment import machine_info, ollama_server_info, profile_info
 from llmcli.bench.report import build_report, write_report
-from llmcli.bench.runner import DEFAULT_DEADLINE_S, DEFAULT_MAX_TOKENS, Pacer, RunRecord, run_task
+from llmcli.bench.runner import (
+    DEFAULT_DEADLINE_S,
+    DEFAULT_MAX_TOKENS,
+    AgentSettings,
+    Pacer,
+    RunRecord,
+    run_task,
+)
 from llmcli.bench.tasks import Task, TaskError, load_oracle, load_tasks, null_script, task_hash
 from llmcli.providers.fake import ScriptedProvider
 
 FAKE_PROFILE = "fake"
 FAKE_CONTEXT_SIZE = 8192
 ACK_FLAG = "--i-understand-this-runs-model-code"
+# Agent settings that --set may override for every profile (spec 16, part B).
+SETTABLE = ("edit_matching", "edit_tools", "stop_guard")
 ACK_MESSAGE = (
     "Benchmark runs approve every edit and test automatically, so code written by the model runs on "
     f"this machine. Use a disposable machine or container, then pass {ACK_FLAG}."
@@ -36,6 +45,26 @@ def _positive_float(value: str) -> float:
     if number <= 0:
         raise argparse.ArgumentTypeError("must be a positive number")
     return number
+
+
+def _setting(value: str) -> tuple[str, Any]:
+    """``KEY=VALUE`` for --set, checked like the same key in config.toml."""
+    from llmcli.config_file import _check_value
+
+    key, separator, raw = value.partition("=")
+    key, raw = key.strip(), raw.strip()
+    if not separator or key not in SETTABLE:
+        raise argparse.ArgumentTypeError(f"use KEY=VALUE with KEY one of {', '.join(SETTABLE)}")
+    parsed: Any = raw
+    if key == "stop_guard":
+        if raw.lower() not in ("true", "false"):
+            raise argparse.ArgumentTypeError("stop_guard must be true or false")
+        parsed = raw.lower() == "true"
+    try:
+        _check_value("--set", key, parsed)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
+    return key, parsed
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,6 +86,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-tokens", type=_positive_int, default=DEFAULT_MAX_TOKENS, help="overrides the profile")
     run.add_argument(
         "--rpm", type=_positive_int, help="at most N model requests per minute (waiting is not timed)"
+    )
+    run.add_argument(
+        "--set", dest="settings", type=_setting, action="append", default=[], metavar="KEY=VALUE",
+        help=f"agent setting for every profile, overriding config.toml ({', '.join(SETTABLE)})",
     )
     run.add_argument("--out", type=Path, help="report folder (default: bench-results/<time>-<commit>)")
     run.add_argument(ACK_FLAG, dest="acknowledged", action="store_true", help=argparse.SUPPRESS)
@@ -126,6 +159,9 @@ def _run_profile(
 
     config = load_config({}, profile=name)
     config.max_tokens = args.max_tokens
+    for key, value in args.settings:
+        setattr(config, key, value)
+    settings = AgentSettings(config.edit_matching, config.edit_tools, config.stop_guard)
     provider = create_provider(config)
     pacer = Pacer(args.rpm) if args.rpm else None
     try:
@@ -147,6 +183,7 @@ def _run_profile(
                     repeat=repeat,
                     deadline_s=args.deadline,
                     pacer=pacer,
+                    settings=settings,
                 )
                 records.append(record)
                 _progress(record)
@@ -167,9 +204,12 @@ def _run_fake(args: argparse.Namespace, tasks: list[Task], records: list[RunReco
             )
             records.append(record)
             _progress(record)
+    defaults = AgentSettings()
     return {"name": FAKE_PROFILE, "provider": "fake", "model": "fake-model", "endpoint": "fake://",
             "context_size": FAKE_CONTEXT_SIZE, "max_tokens": None, "temperature": None,
-            "tool_mode": "auto", "extra_body": {}, "server_version": None, "model_digest": None}
+            "tool_mode": "auto", "extra_body": {}, "server_version": None, "model_digest": None,
+            "edit_matching": defaults.edit_matching, "edit_tools": defaults.edit_tools,
+            "stop_guard": defaults.stop_guard}
 
 
 def cmd_run(args: argparse.Namespace, tasks: list[Task]) -> int:
@@ -186,6 +226,7 @@ def cmd_run(args: argparse.Namespace, tasks: list[Task]) -> int:
             "deadline_s": args.deadline,
             "max_tokens": None if args.fake else args.max_tokens,
             "rpm": None if args.fake else args.rpm,
+            "overrides": dict(args.settings),
         },
         "tasks": [{"id": t.id, "category": t.category, "hash": task_hash(t)} for t in tasks],
     }

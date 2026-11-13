@@ -32,6 +32,15 @@ DEFAULT_DEADLINE_S = 600.0
 DEFAULT_MAX_TOKENS = 1024
 
 
+@dataclass(frozen=True)
+class AgentSettings:
+    """The agent settings a run uses (spec 16, part B); defaults are the 0.6 behaviour."""
+
+    edit_matching: str = "exact"
+    edit_tools: str = "replace"
+    stop_guard: bool = False
+
+
 class Pacer:
     """Keeps model requests at least ``60 / rpm`` seconds apart (spec 16, A5).
 
@@ -199,6 +208,7 @@ def run_task(
     repeat: int = 1,
     deadline_s: float = DEFAULT_DEADLINE_S,
     pacer: Pacer | None = None,
+    settings: AgentSettings | None = None,
 ) -> RunRecord:
     """Run ``task`` once with ``provider``. Every edit and test is approved automatically,
     which is acceptable only because the workspace is a throwaway copy (spec 15, 2.8).
@@ -222,8 +232,10 @@ def run_task(
 
         start = time.monotonic()
         wrapped = cast(BaseProvider, DeadlineProvider(inner, start + deadline_s, deadline_s, paused_s))
+        settings = settings or AgentSettings()
+        tools = ProjectCodingTools(work, ui, settings.edit_matching, settings.edit_tools)
         agent = CodingAgent(
-            wrapped, conversation, ProjectCodingTools(work, ui), ui, lambda _message: True, tool_mode
+            wrapped, conversation, tools, ui, lambda _message: True, tool_mode, settings.stop_guard
         )
         outcome = agent.run(task.prompt)
         wall_s = time.monotonic() - start - paused_s()

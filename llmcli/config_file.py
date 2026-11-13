@@ -24,18 +24,27 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10
 PROFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 PROVIDERS = ("ollama", "openai_compat")
 TOOL_MODES = ("auto", "native", "text")
+# Agent settings for measured comparisons (spec 16, part B).
+EDIT_MATCHING = ("exact", "tolerant")
+EDIT_TOOLS = ("replace", "replace+lines")
 
 # Where each setting may appear (spec 13, section 2.2).
 DEFAULTS_ONLY = frozenset({"profile", "theme", "context_file"})
 PROFILE_ONLY = frozenset({"provider", "endpoint", "model", "api_key"})
 SHARED = frozenset(
-    {"context_size", "max_tokens", "temperature", "top_p", "extra_body", "request_timeout", "tool_mode"}
+    {
+        "context_size", "max_tokens", "temperature", "top_p", "extra_body", "request_timeout", "tool_mode",
+        "edit_matching", "edit_tools", "stop_guard",
+    }
 )
 DEFAULTS_KEYS = DEFAULTS_ONLY | SHARED
 PROFILE_KEYS = PROFILE_ONLY | SHARED
 REQUIRED_IN_PROFILE = ("provider", "endpoint", "model")
 
-STRING_KEYS = frozenset({"profile", "theme", "context_file", "provider", "endpoint", "model", "tool_mode"})
+STRING_KEYS = frozenset(
+    {"profile", "theme", "context_file", "provider", "endpoint", "model", "tool_mode", "edit_matching", "edit_tools"}
+)
+BOOL_KEYS = frozenset({"stop_guard"})
 INT_KEYS = frozenset({"context_size", "max_tokens", "request_timeout"})
 FLOAT_KEYS = frozenset({"temperature", "top_p"})
 TABLE_KEYS = frozenset({"extra_body"})
@@ -82,6 +91,8 @@ def _check_value(where: str, key: str, value: Any) -> None:
     elif key in INT_KEYS:
         ok = isinstance(value, int) and not isinstance(value, bool) and value > 0
         expected = "a whole number greater than zero"
+    elif key in BOOL_KEYS:
+        ok, expected = isinstance(value, bool), "true or false"
     elif key in FLOAT_KEYS:
         ok, expected = isinstance(value, (int, float)) and not isinstance(value, bool), "a number"
     else:  # TABLE_KEYS
@@ -90,8 +101,9 @@ def _check_value(where: str, key: str, value: Any) -> None:
         raise ValueError(f"{where}: {key} must be {expected}.")
     if key == "provider" and value not in PROVIDERS:
         raise ValueError(f"{where}: provider must be one of {', '.join(PROVIDERS)}, got {value!r}.")
-    if key == "tool_mode" and value not in TOOL_MODES:
-        raise ValueError(f"{where}: tool_mode must be one of {', '.join(TOOL_MODES)}, got {value!r}.")
+    for name, allowed in (("tool_mode", TOOL_MODES), ("edit_matching", EDIT_MATCHING), ("edit_tools", EDIT_TOOLS)):
+        if key == name and value not in allowed:
+            raise ValueError(f"{where}: {name} must be one of {', '.join(allowed)}, got {value!r}.")
     if key == "endpoint":
         parsed = urlparse(value)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
