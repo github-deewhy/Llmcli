@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from llmcli.coding_tools import ProjectCodingTools, tool_schemas
+from llmcli.coding_tools import ProjectCodingTools
 from llmcli.history import Conversation
 from llmcli.providers.base import BaseProvider, ToolCall
 from llmcli.providers.events import ProviderError, Usage
@@ -32,6 +32,13 @@ AGENT_INSTRUCTIONS = (
     "succeeded unless the tool result confirms it. File edits and test execution "
     "require the user's explicit approval."
 )
+# Added with stop_guard = true (spec 16, B4).
+STOP_INSTRUCTION = "When the task is done, give your final answer in plain text without calling a tool."
+REPEAT_NOTE = (
+    "Not run again: this is the same call with the same arguments as your previous call, "
+    "and its result is above. If the task is done, answer in plain text without a tool call."
+)
+EDIT_TOOL_NAMES = frozenset({"replace_in_file", "edit_lines", "create_file"})
 
 
 @dataclass
@@ -46,7 +53,8 @@ class RunOutcome:
     ``invalid_calls`` counts calls rejected before running (unknown tool or bad
     arguments). ``tool_errors`` counts calls that ran and returned an error, for
     example a ``replace_in_file`` whose ``old_text`` was not found (spec 16, A3);
-    ``tool_error_messages`` holds their messages, one per error.
+    ``tool_error_messages`` holds their messages, one per error. ``repeat_skips``
+    counts calls not run because they repeated the previous call (``stop_guard``).
     """
 
     stop_reason: str = "answered"
@@ -55,6 +63,7 @@ class RunOutcome:
     invalid_calls: int = 0
     tool_errors: int = 0
     tool_error_messages: list[str] = field(default_factory=list)
+    repeat_skips: int = 0
     repairs: int = 0
     mode_switched: bool = False
     error: str | None = None
@@ -72,14 +81,23 @@ class CodingAgent:
         ui: StreamingUI,
         confirm: Callable[[str], bool],
         tool_mode: str = "auto",
+        stop_guard: bool = False,
     ):
         self.provider = provider
         self.conversation = conversation
         self.tools = tools
         self.ui = ui
         self.confirm = confirm
+        self.stop_guard = stop_guard
         self.set_tool_mode(tool_mode)
         self._outcome = RunOutcome()
+        self._previous_call: tuple[str, str] | None = None
+
+    def apply_settings(self, edit_matching: str, edit_tools: str, stop_guard: bool) -> None:
+        """Agent settings from the active profile (spec 16, part B)."""
+        self.tools.edit_matching = edit_matching
+        self.tools.edit_tools = edit_tools
+        self.stop_guard = stop_guard
 
     def set_tool_mode(self, tool_mode: str) -> None:
         """``auto`` and ``native`` start with native calls; ``text`` uses the text protocol."""
@@ -95,7 +113,8 @@ class CodingAgent:
         outcome = RunOutcome()
         self._outcome = outcome
         self.conversation.add("user", prompt)
-        schemas = tool_schemas()
+        schemas = self.tools.schemas()
+        self._previous_call = None
         used_tools = False
         repairs_left = REPAIRS_PER_TURN
         for _round_number in range(1, MAX_TOOL_ROUNDS + 1):
@@ -203,8 +222,14 @@ class CodingAgent:
                 self._outcome.tool_calls += 1
                 if problem or call.name not in parameters:
                     self._outcome.invalid_calls += 1
+                signature = (call.name, json.dumps(call.arguments, sort_keys=True, default=str))
+                repeated = self.stop_guard and signature == self._previous_call
+                self._previous_call = signature
                 if problem:
                     result = json.dumps({"error": f"{call.name}: {problem}"})
+                elif repeated:
+                    self._outcome.repeat_skips += 1
+                    result = json.dumps({"status": "skipped", "note": REPEAT_NOTE})
                 else:
                     result = self.tools.execute(call.name, call.arguments, self.confirm)
                     self._note_tool_error(call.name, result)
@@ -243,7 +268,7 @@ class CodingAgent:
     def _show_tool_result(self, name: str, result: str) -> None:
         data = json.loads(result)
         status = data.get("status")
-        if name in {"replace_in_file", "create_file"}:
+        if name in EDIT_TOOL_NAMES:
             if status in {"updated", "created"}:
                 self.ui.print_success(f"{status.title()}: [bold]{data['path']}[/bold]")
             elif status == "cancelled":
@@ -259,6 +284,8 @@ class CodingAgent:
 
     def _messages_for_agent(self, text_mode: bool, schemas: list[dict[str, Any]]) -> list[dict]:
         instructions = AGENT_INSTRUCTIONS
+        if self.stop_guard:
+            instructions = f"{instructions} {STOP_INSTRUCTION}"
         if text_mode:
             instructions = f"{instructions}\n\n{text_mode_instructions(schemas)}"
         messages = self.conversation.get_messages_for_api()

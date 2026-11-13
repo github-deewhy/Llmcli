@@ -97,7 +97,9 @@ machine or container; the command refuses to start without
 `--i-understand-this-runs-model-code`. Each task has a deadline (`--deadline`, default
 600 s) and replies are capped by `--max-tokens` (default 1024). For a server with a
 rate limit, `--rpm N` keeps model requests at least 60/N seconds apart; the waiting
-time is not counted in wall time or against the deadline. Reports go to
+time is not counted in wall time or against the deadline. `--set KEY=VALUE` overrides an
+agent setting (`edit_matching`, `edit_tools`, `stop_guard`) for every profile in the
+run, to compare a change on and off. Reports go to
 `bench-results/` (`report.json`, `report.md`, `transcripts/`). Besides invalid tool
 calls, reports count tool errors (a call that ran and failed, for example an edit
 whose text was not found) and show the most common error per task.

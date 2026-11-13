@@ -32,6 +32,9 @@ BUILT_IN: dict[str, Any] = {
     "extra_body": {},
     "request_timeout": 300,
     "tool_mode": "auto",
+    "edit_matching": "exact",
+    "edit_tools": "replace",
+    "stop_guard": False,
 }
 
 CLI_KEYS = ("model", "theme")
@@ -59,6 +62,10 @@ class Config:
     request_timeout: int = 300
     # Tool-call rung: "auto" (native, falls back to text), "native" or "text" (spec 14, 2.6).
     tool_mode: str = "auto"
+    # Agent settings compared by the benchmark (spec 16, part B); defaults keep 0.6 behaviour.
+    edit_matching: str = "exact"
+    edit_tools: str = "replace"
+    stop_guard: bool = False
 
 
 def select_profile(file: ConfigFile, requested: str | None) -> str | None:
@@ -118,4 +125,7 @@ def load_config(
         source=file.label if file.exists else BUILT_IN_SOURCE,
         request_timeout=int(values["request_timeout"]),
         tool_mode=str(values["tool_mode"]),
+        edit_matching=str(values["edit_matching"]),
+        edit_tools=str(values["edit_tools"]),
+        stop_guard=bool(values["stop_guard"]),
     )

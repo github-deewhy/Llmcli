@@ -318,6 +318,7 @@ def switch_profile_session(
     old_provider = agent.provider
     config.__dict__.update(vars(new_config))
     agent.set_provider(new_provider, new_config.tool_mode)
+    agent.apply_settings(new_config.edit_matching, new_config.edit_tools, new_config.stop_guard)
     old_provider.close()
     conversation.max_tokens = new_config.context_size
     if keep:
@@ -362,6 +363,11 @@ def run_repl(config, provider, conversation: Conversation, ui: StreamingUI, memo
     tools = ProjectCodingTools(Path.cwd(), ui)
     agent = CodingAgent(
         provider, conversation, tools, ui, confirm_agent_action, getattr(config, "tool_mode", "auto")
+    )
+    agent.apply_settings(
+        getattr(config, "edit_matching", "exact"),
+        getattr(config, "edit_tools", "replace"),
+        getattr(config, "stop_guard", False),
     )
 
     def switch_profile(name: str, keep: bool) -> None:
