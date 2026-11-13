@@ -1,0 +1,27 @@
+[
+  {
+    "tool_calls": [
+      {
+        "name": "read_file",
+        "arguments": {
+          "path": "text_utils.py"
+        }
+      }
+    ]
+  },
+  {
+    "tool_calls": [
+      {
+        "name": "replace_in_file",
+        "arguments": {
+          "path": "text_utils.py",
+          "old_text": "    return re.sub(r\"\\s+\", \" \", text).strip()\n",
+          "new_text": "    return re.sub(r\"\\s+\", \" \", text).strip()\n\n\ndef slugify(text: str) -> str:\n    \"\"\"Lowercase, non-alphanumeric runs to one hyphen, no hyphens at the ends.\"\"\"\n    return re.sub(r\"[^a-z0-9]+\", \"-\", text.lower()).strip(\"-\")\n"
+        }
+      }
+    ]
+  },
+  {
+    "text": "Added `slugify` to `text_utils.py`."
+  }
+]

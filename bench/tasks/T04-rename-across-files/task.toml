@@ -1,0 +1,6 @@
+id = "T04"
+title = "Rename a function and all its callers"
+category = "refactor"
+prompt = """Rename the function calc_total in pricing.py to order_total and update every place in the project that uses it."""
+checker = ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "check_rename.py"]
+checker_timeout = 60

@@ -1,0 +1,6 @@
+id = "T02"
+title = "Fix an off-by-one in a range helper"
+category = "fix-bug"
+prompt = """The tests in test_ranges.py fail. Find and fix the bug in ranges.py."""
+checker = ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "check_ranges.py"]
+checker_timeout = 60

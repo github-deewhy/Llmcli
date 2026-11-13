@@ -1,0 +1,6 @@
+id = "T05"
+title = "Write tests for a stack class"
+category = "write-tests"
+prompt = """Write pytest tests in a new file test_stack.py for the Stack class in stack.py. Cover push, pop, peek and is_empty, including that pop and peek on an empty stack raise IndexError, and that peek returns the most recently pushed item."""
+checker = ["python", "check_tests.py"]
+checker_timeout = 120

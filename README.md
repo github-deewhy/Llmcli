@@ -80,6 +80,24 @@ Live tests run against your own server and are skipped by default:
 pytest -m live --live-profile ollama -v   # profile name from ~/.llmcli/config.toml
 ```
 
+## Benchmark harness (development tool)
+
+`python -m llmcli.bench` measures the agent on small coding tasks in `bench/tasks/`
+(run it from a checkout of this repository). It is not a `llmcli` command.
+
+```bash
+python -m llmcli.bench list                # the tasks
+python -m llmcli.bench check               # each task's scripted solution passes; doing nothing fails
+python -m llmcli.bench run --fake          # whole pipeline with scripted replies, no model
+```
+
+`run --profile NAME` uses a real model and **approves every edit and test
+automatically**, so code written by the model runs on your machine. Use a disposable
+machine or container; the command refuses to start without
+`--i-understand-this-runs-model-code`. Each task has a deadline (`--deadline`, default
+600 s) and replies are capped by `--max-tokens` (default 1024). Reports go to
+`bench-results/` (`report.json`, `report.md`, `transcripts/`).
+
 ## Example
 
 ```bash

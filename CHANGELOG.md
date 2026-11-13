@@ -3,6 +3,29 @@
 Format: newest first. Update this file and the docs (README.md, user-guide.md,
 config.toml.example) in the same change as the code.
 
+## 0.5.0
+
+M2 part 1: benchmark harness, tested with scripted replies only.
+
+### Added
+- `python -m llmcli.bench` (`list`, `check`, `run`): a development tool, not a
+  `llmcli` command. Six tasks in `bench/tasks/` (explain, fix a bug, add a function,
+  refactor, write tests, multi-file change), each with hidden checks and a scripted
+  solution; `check` and the test suite confirm every solution passes and doing
+  nothing fails.
+- Reports in `bench-results/`: `report.json`, `report.md` and one transcript per run,
+  with success, wall time, tokens, tokens/s, rounds, tool-call validity, loop-guard
+  hits, peak context use and history trims, plus the machine and profile settings
+  (never the API key).
+- Per-task deadline and `--max-tokens` cap for real-model runs; real-model runs need
+  `--i-understand-this-runs-model-code` because edits and tests are approved
+  automatically.
+
+### Changed
+- Internal: `CodingAgent.run()` returns how the run ended (`RunOutcome`);
+  `Conversation` counts history trims. The interactive CLI behaves as before.
+- `llmcli.__version__` now matches the package version (it still said 0.3.0).
+
 ## 0.4.0
 
 M1: streaming provider layer. Only Ollama is tested against a live server.

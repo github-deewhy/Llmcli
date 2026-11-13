@@ -1,0 +1,6 @@
+id = "T03"
+title = "Add slugify() to a text module"
+category = "add-function"
+prompt = """Add a function slugify(text: str) -> str to text_utils.py. It lowercases the text, turns every run of characters that are not ASCII letters or digits into a single hyphen, and removes hyphens at the start and end. Keep normalize_spaces unchanged."""
+checker = ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "check_slugify.py"]
+checker_timeout = 60
